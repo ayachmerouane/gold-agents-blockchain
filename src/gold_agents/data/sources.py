@@ -61,20 +61,26 @@ def kaggle_auth_header(
 ) -> dict[str, str]:
     """En-tête d'authentification Kaggle.
 
-    Ordre : `KAGGLE_API_TOKEN` (jeton récent), puis `KAGGLE_USERNAME` + `KAGGLE_KEY`,
-    puis `~/.kaggle/kaggle.json` (ou `$KAGGLE_CONFIG_DIR/kaggle.json`).
+    Ordre : jeton récent (`KAGGLE_API_TOKEN`, puis fichier `access_token`), puis
+    anciens identifiants (`KAGGLE_USERNAME` + `KAGGLE_KEY`, puis fichier `kaggle.json`).
+    Les fichiers sont lus dans `$KAGGLE_CONFIG_DIR`, à défaut `~/.kaggle`.
     """
     env = os.environ if env is None else env
-    if token := env.get("KAGGLE_API_TOKEN"):
+    base = config_dir or Path(env.get("KAGGLE_CONFIG_DIR", Path.home() / ".kaggle"))
+    token = env.get("KAGGLE_API_TOKEN", "").strip()
+    token_path = base / "access_token"
+    if not token and token_path.exists():
+        token = token_path.read_text(encoding="utf-8").strip()
+    if token:
         return {"Authorization": f"Bearer {token}"}
+
     username, key = env.get("KAGGLE_USERNAME"), env.get("KAGGLE_KEY")
     if not (username and key):
-        base = config_dir or Path(env.get("KAGGLE_CONFIG_DIR", Path.home() / ".kaggle"))
         creds_path = base / "kaggle.json"
         if not creds_path.exists():
             raise SourceError(
-                "identifiants Kaggle introuvables : définir KAGGLE_USERNAME et KAGGLE_KEY "
-                f"ou créer {creds_path} (Kaggle > Settings > API > Create New Token)"
+                "jeton Kaggle introuvable : définir KAGGLE_API_TOKEN ou l'enregistrer dans "
+                f"{token_path} (Kaggle > Settings > API > Generate New Token)"
             )
         creds = json.loads(creds_path.read_text(encoding="utf-8"))
         username, key = creds.get("username"), creds.get("key")

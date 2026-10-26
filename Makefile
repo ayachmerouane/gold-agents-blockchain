@@ -25,7 +25,7 @@ cov:
 
 check: lint typecheck test
 
-download:         ## CSV Kaggle quotidien + empreinte SHA-256 (jeton Kaggle requis)
+download:         ## CSV Kaggle quotidien + empreinte SHA-256 (KAGGLE_API_TOKEN ou ~/.kaggle/access_token)
 	uv run gold-agents download
 
 update-data:      ## Jours récents via Twelve Data (TWELVEDATA_API_KEY requis)

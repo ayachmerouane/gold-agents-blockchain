@@ -45,6 +45,19 @@ def test_kaggle_auth_prefers_api_token() -> None:
     assert header == {"Authorization": "Bearer t"}
 
 
+def test_kaggle_auth_from_access_token_file(tmp_path: Path) -> None:
+    (tmp_path / "access_token").write_text("KGAT_exemple\n")
+    (tmp_path / "kaggle.json").write_text(json.dumps({"username": "u", "key": "k"}))
+    header = sources.kaggle_auth_header({}, config_dir=tmp_path)
+    assert header == {"Authorization": "Bearer KGAT_exemple"}
+
+
+def test_kaggle_auth_reads_config_dir_from_env(tmp_path: Path) -> None:
+    (tmp_path / "access_token").write_text("KGAT_exemple")
+    header = sources.kaggle_auth_header({"KAGGLE_CONFIG_DIR": str(tmp_path)})
+    assert header == {"Authorization": "Bearer KGAT_exemple"}
+
+
 def test_kaggle_auth_from_kaggle_json(tmp_path: Path) -> None:
     (tmp_path / "kaggle.json").write_text(json.dumps({"username": "u", "key": "k"}))
     header = sources.kaggle_auth_header({}, config_dir=tmp_path)
@@ -52,7 +65,7 @@ def test_kaggle_auth_from_kaggle_json(tmp_path: Path) -> None:
 
 
 def test_kaggle_auth_missing_explains_how_to_fix(tmp_path: Path) -> None:
-    with pytest.raises(sources.SourceError, match="KAGGLE_USERNAME"):
+    with pytest.raises(sources.SourceError, match="KAGGLE_API_TOKEN"):
         sources.kaggle_auth_header({}, config_dir=tmp_path)
 
 

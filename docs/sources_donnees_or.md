@@ -12,7 +12,7 @@
 - Provenance : export MetaTrader 4 via des scripts MQL4 de l'auteur (https://github.com/nvn01/MQL4-Script-fetching-XAUUSD-price-history). Mise à jour **manuelle et irrégulière** par l'auteur. `Volume` = tick volume du courtier, pas un vrai volume.  
 - Un miroir Hugging Face existe (https://huggingface.co/datasets/ZombitX64/xauusd-gold-price-historical-data-2004-2025), arrêté à octobre 2025 : utile en secours seulement.
 
-Téléchargement reproductible : `kaggle datasets download -d novandraanugrah/xauusd-gold-price-historical-data-2004present -p data/raw --unzip` (jeton dans `~/.kaggle/kaggle.json`, jamais dans le dépôt), puis empreinte SHA-256 dans `data/raw/CHECKSUMS.txt`.
+Téléchargement reproductible : `make download` (jeton `KGAT_…` dans la variable `KAGGLE_API_TOKEN` ou le fichier `~/.kaggle/access_token`, jamais dans le dépôt), qui note aussi l'empreinte SHA-256 dans `data/raw/CHECKSUMS.txt`.
 
 ## 2. Comparaison des sources pour la mise à jour
 

@@ -31,7 +31,7 @@ Les données ne sont pas versionnées et **aucune clé n'est stockée dans le d�
 
 | Besoin | Où le mettre |
 |---|---|
-| Jeton Kaggle | `~/.kaggle/kaggle.json` (Kaggle > Settings > API > *Create New Token*), ou les variables `KAGGLE_USERNAME` + `KAGGLE_KEY` |
+| Jeton Kaggle (`KGAT_…`) | Kaggle > Settings > API > *Generate New Token*, puis soit la variable `KAGGLE_API_TOKEN`, soit le fichier `~/.kaggle/access_token` (`chmod 600`). L'ancien `~/.kaggle/kaggle.json` (ou `KAGGLE_USERNAME` + `KAGGLE_KEY`) reste accepté. |
 | Clé Twelve Data (gratuite) | variable d'environnement `TWELVEDATA_API_KEY` (par exemple dans un `.env` local, ignoré par Git) |
 
 ```bash
