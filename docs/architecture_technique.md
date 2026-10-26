@@ -3,7 +3,7 @@
 
 > **Rôle de ce document.** C'est le document de référence du « tech lead » : il fixe les choix d'outils, de modèles, de tests, l'organisation du code et le planning. Il complète [explication_projet.md](explication_projet.md), qui explique le sujet. Ici on décide **comment** on le construit.
 >
-> **Document vivant.** Chaque décision est justifiée et peut être révisée. Quand une décision change, on met à jour la section concernée et on ajoute une ligne dans le [journal des révisions](#15-journal-des-révisions).
+> **Document vivant.** Chaque décision est justifiée et peut être révisée. Quand une décision change, on met à jour la section concernée et on ajoute une ligne dans le [journal des révisions](#16-journal-des-révisions).
 >
 > Aucune implémentation dans ce document.
 
@@ -24,8 +24,9 @@
 11. [Structure du dépôt](#11-structure-du-dépôt)
 12. [Phases, jalons et planning](#12-phases-jalons-et-planning)
 13. [Risques et parades](#13-risques-et-parades)
-14. [Décisions ouvertes](#14-décisions-ouvertes)
-15. [Journal des révisions](#15-journal-des-révisions)
+14. [Extension future : facteurs externes au prix](#14-extension-future--facteurs-externes-au-prix)
+15. [Décisions ouvertes](#15-décisions-ouvertes)
+16. [Journal des révisions](#16-journal-des-révisions)
 
 ---
 
@@ -479,12 +480,67 @@ Planning indicatif sur **10 semaines** (à ajuster selon la date de rendu). Chaq
 | R6 | **Frais sous-estimés** → profits irréalistes | Moyenne | Élevé | Frais + slippage + sensibilité × 2 / × 5. |
 | R7 | **Blockchain jugée « pas assez blockchain »** | Moyenne | Moyen | Merkle + signature + PoW légère ; bonus ancrage Sepolia ou contrat Hardhat. |
 | R8 | **Non-reproductibilité** (versions, graines, GPU) | Moyenne | Moyen | Versions figées, graines, `torch.use_deterministic_algorithms`, CPU suffisant pour ce volume. |
-| R9 | **Dérive de périmètre** (Transformer, RL, LLM…) | Élevée | Moyen | Les bonus ne démarrent qu'après le jalon S8 ; liste de « perspectives » pour le rapport. |
+| R9 | **Dérive de périmètre** (Transformer, RL, LLM, facteurs externes…) | Élevée | Moyen | Les bonus ne démarrent qu'après le jalon S8 ; liste de « perspectives » pour le rapport. |
 | R10 | **Retard sur le planning** | Moyenne | Élevé | Ordre « plomberie d'abord », jalons hebdomadaires, version minimale livrable dès S6. |
 
 ---
 
-## 14. Décisions ouvertes
+## 14. Extension future : facteurs externes au prix
+
+> **Statut : à faire plus tard.** Le sujet demande une prévision à partir des prix historiques. On livre d'abord cette version « prix seuls » (phases S1 à S8). Cette extension ne démarre qu'une fois la version de base terminée et évaluée.
+
+### 14.1 Pourquoi
+Les bougies (Open, High, Low, Close) ne sont que la **trace finale** de ce qui fait bouger l'or : décisions et discours de la Fed, chiffres de l'inflation et de l'emploi, guerres, droits de douane, déclarations politiques. Le prix réagit en quelques minutes, et la bougie enregistre seulement le résultat.
+
+Le modèle « prix seuls » suppose que ces informations sont déjà dans le prix. C'est en partie vrai, mais il **ne peut pas anticiper** une annonce qu'il ne connaît pas. Ajouter des facteurs externes permet de tester s'ils améliorent vraiment la prévision et le profit.
+
+### 14.2 Familles de variables envisagées
+
+| Famille | Exemples | Source possible | Fréquence |
+|---|---|---|---|
+| **Macro-économie** | Taux américains (10 ans, taux réel), inflation (CPI), indice du dollar **DXY** | **FRED** (Réserve fédérale de Saint-Louis), API gratuite | Quotidienne à mensuelle |
+| **Peur du marché** | **VIX** (volatilité implicite du S&P 500) | FRED / Yahoo Finance | Quotidienne |
+| **Calendrier économique** | Dates des réunions de la Fed (**FOMC**), chiffres de l'emploi (**NFP**), CPI | Calendriers officiels (Fed, BLS) | Événements datés, **connus à l'avance** |
+| **Sentiment des actualités** | Score positif / négatif par jour à partir des titres de presse ou des discours | Modèle NLP **FinBERT** (Hugging Face `transformers`) appliqué à un jeu de titres datés (ex. GDELT, jeux Kaggle de news financières) | Quotidienne (agrégée) |
+| **Risque géopolitique** | Indice **GPR** (Caldara & Iacoviello) | matteoiacoviello.com/gpr.htm | Quotidienne |
+
+Les variables du calendrier sont encodées en indicateurs simples : « réunion Fed demain », « jours avant le prochain NFP », etc.
+
+### 14.3 Les deux pièges
+
+1. **Fuite du futur (le plus grave).** On ne doit utiliser que l'information **réellement connue avant la décision** :
+   - **Date de publication, pas date de référence** : le CPI de septembre est publié mi-octobre. Il n'est utilisable qu'à partir de sa date de publication.
+   - **Révisions** : certaines séries macro sont révisées après coup. Il faut idéalement la valeur d'origine (données *point-in-time*, par exemple **ALFRED**, l'archive des versions de FRED).
+   - **Fuseaux horaires** : une nouvelle publiée après la clôture de l'or au jour *t* ne compte qu'au jour *t+1*.
+   - Les tests anti-fuite du §10.3 (troncature, permutation du futur) sont étendus à ces nouvelles variables.
+2. **Réactions instables.** Le marché ne réagit pas toujours de la même façon à une même nouvelle (une hausse des taux peut faire baisser l'or une fois et le laisser stable une autre). Ces effets sont donc difficiles à apprendre avec peu de données, et le risque de surapprentissage augmente.
+
+### 14.4 Intégration dans l'architecture
+- Nouveau module `src/gold_agents/data/external/` : un chargeur par source (`fred.py`, `calendar.py`, `gpr.py`, `sentiment.py`), chacun renvoyant une série **alignée sur la date de disponibilité**.
+- Le sentiment FinBERT est **pré-calculé hors ligne** et sauvegardé en Parquet, pour que le backtest reste rapide et déterministe.
+- Les nouvelles colonnes s'ajoutent aux features existantes ; le reste de la chaîne (modèle, agents, simulation, blockchain) ne change pas, grâce au découplage (principe P4).
+- Option : un **agent « Contexte »** (ou « Macro ») qui fournit un score de régime de marché à l'agent Stratégie ou à l'agent Risque (par exemple réduire l'exposition la veille d'une réunion de la Fed).
+- Le hash des données externes est inscrit dans le bloc genèse, comme pour les prix.
+
+### 14.5 Méthode d'évaluation : étude d'ablation
+On compare, sur le **même** protocole (mêmes splits, mêmes graines, mêmes frais) :
+
+| Variante | Features |
+|---|---|
+| V0 | Prix seuls (version de base) |
+| V1 | Prix + macro (taux, DXY, inflation, VIX) |
+| V2 | V1 + calendrier économique |
+| V3 | V2 + sentiment des actualités |
+| V4 | V3 + indice GPR |
+
+Pour chaque variante : MAE, RMSE, précision directionnelle, puis profit net, Sharpe et drawdown après frais. On conclut seulement si le gain est **stable sur plusieurs graines et plusieurs périodes** (walk-forward). Si les facteurs n'apportent rien, c'est aussi un résultat à présenter au professeur.
+
+### 14.6 Place dans le planning
+Après le jalon S8 (évaluation finale prix seuls), dans le temps restant avant le rapport, ou comme **perspective** dans le rapport si le temps manque. Ordre conseillé : macro → calendrier → GPR → sentiment (le sentiment est le plus coûteux à mettre en place).
+
+---
+
+## 15. Décisions ouvertes
 
 À trancher (et à reporter dans le journal des révisions) :
 
@@ -498,8 +554,9 @@ Planning indicatif sur **10 semaines** (à ajuster selon la date de rendu). Chaq
 
 ---
 
-## 15. Journal des révisions
+## 16. Journal des révisions
 
 | Date | Version | Auteur | Changement |
 |---|---|---|---|
 | 2026-10-26 | 1.0 | ayach (avec Claude) | Première version de l'architecture technique. |
+| 2026-10-26 | 1.1 | ayach (avec Claude) | Ajout de la section 14 : extension future avec facteurs externes au prix (macro, calendrier, sentiment FinBERT, GPR), pièges et étude d'ablation. |
