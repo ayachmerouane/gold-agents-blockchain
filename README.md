@@ -63,7 +63,7 @@ En PowerShell, la clé se définit avec `$env:TWELVEDATA_API_KEY = "..."` au lie
 - affiche un résumé d'une quarantaine de lignes dans le terminal ;
 - écrit `outputs/eda/rapport_eda.md`, `outputs/eda/summary.json` et 5 figures dans `outputs/eda/figures/`.
 
-Contrôles : trous de dates et barres de week-end, cohérence OHLC, distribution des rendements (queues épaisses, Jarque-Bera), valeurs aberrantes (z-score robuste, allers-retours suspects), régimes de volatilité, autocorrélation (Ljung-Box) et stationnarité (ADF, KPSS), aperçu du découpage train/val/test et raccord avec la mise à jour API. Tous les seuils et tests sont calculés **sur le train seulement**. Le notebook `notebooks/01_eda.ipynb` appelle les mêmes fonctions.
+Contrôles : trous de dates et barres de week-end, cohérence OHLC, distribution des rendements (queues épaisses, Jarque-Bera), valeurs aberrantes (z-score robuste, allers-retours suspects), régimes de volatilité, autocorrélation (Ljung-Box) et stationnarité (ADF, KPSS), aperçu du découpage train/val/test et raccord avec la mise à jour API. Tous les seuils et tests sont calculés **sur le train seulement**. **Notebook** : `notebooks/01_eda_nettoyage.ipynb` parcourt les données pas à pas (graphes, relations entre variables, nettoyage) et écrit `data/processed/xau_1d_clean.parquet`. Pour l'ouvrir : `uv run --with jupyterlab jupyter lab notebooks/01_eda_nettoyage.ipynb`.
 
 ## Commandes
 
