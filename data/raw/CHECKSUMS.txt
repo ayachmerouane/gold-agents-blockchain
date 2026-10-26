@@ -1,0 +1,3 @@
+# Empreintes SHA-256 des fichiers bruts (format : <sha256>  <nom_de_fichier>)
+# Source : Kaggle « XAUUSD Gold Price Tracker: 2004–Present » (quotidien)
+# Générer avec : sha256sum data/raw/*.csv >> data/raw/CHECKSUMS.txt

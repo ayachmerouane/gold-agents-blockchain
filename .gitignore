@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Outils
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# Données brutes et produites (hors Git : lien Kaggle + checksum)
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/CHECKSUMS.txt
+data/processed/*
+!data/processed/.gitkeep
+
+# Sorties générées
+outputs/models/*
+!outputs/models/.gitkeep
+outputs/results/*
+!outputs/results/.gitkeep
+mlruns/
+
+# Secrets : la clé privée du registre ne doit jamais être versionnée
+*.key
+*private*.pem
+.env
+
+# Divers
+.DS_Store
+.idea/
+.vscode/

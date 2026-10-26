@@ -1,0 +1,38 @@
+# Configuration centrale du projet (validée par gold_agents.config).
+# Les seuils sont réglés sur la validation puis FIGÉS avant le test,
+# et inscrits dans le bloc genèse du registre (§6.3).
+
+seed: 42
+
+data:
+  raw_path: data/raw/XAU_1d_data.csv
+  processed_dir: data/processed
+
+splits:
+  train_end: "2018-12-31"
+  val_start: "2019-01-01"
+  val_end: "2021-12-31"
+  test_start: "2022-01-01"
+
+features:
+  window: 30            # W, à régler : 20, 30, 60
+  sma_periods: [10, 20, 50]
+  ema_periods: [10, 20, 50]
+  rsi_period: 14
+  atr_period: 14
+  volatility_window: 20
+
+strategy:
+  theta_buy: 0.001
+  theta_sell: 0.001
+
+risk:
+  max_position: 1.0     # fraction du capital (1.0 = 100 %)
+  stop_loss: 0.05       # -5 % sur la position
+  max_drawdown: 0.20    # -20 % -> passage en cash
+  allow_short: false
+
+simulation:
+  initial_capital: 10000.0
+  fee_rate: 0.001       # 0,1 %
+  slippage: 0.0002      # 0,02 %
