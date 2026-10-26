@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check data train backtest evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data data train backtest evaluate verify dashboard all
 
 install:          ## Dépendances de base + outils de dev
 	uv sync --extra dev
@@ -24,6 +24,12 @@ cov:
 	uv run pytest -m "not slow" --cov --cov-report=term-missing
 
 check: lint typecheck test
+
+download:         ## CSV Kaggle quotidien + empreinte SHA-256 (KAGGLE_API_TOKEN ou ~/.kaggle/access_token)
+	uv run gold-agents download
+
+update-data:      ## Jours récents via Twelve Data (TWELVEDATA_API_KEY requis)
+	uv run gold-agents update-data
 
 data:
 	uv run gold-agents prepare

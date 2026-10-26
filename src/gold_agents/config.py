@@ -19,6 +19,9 @@ class _Strict(BaseModel):
 class DataConfig(_Strict):
     raw_path: Path
     processed_dir: Path
+    # Jours ajoutés par l'API après la fin du CSV Kaggle (jamais utilisés pour l'évaluation).
+    update_path: Path = Path("data/raw/XAU_1d_update.csv")
+    checksums_path: Path = Path("data/raw/CHECKSUMS.txt")
 
 
 class SplitsConfig(_Strict):
