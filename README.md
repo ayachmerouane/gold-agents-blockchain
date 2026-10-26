@@ -41,6 +41,17 @@ make update-data                 # ajoute les jours manquants (Twelve Data)
 uv sync --extra dev --extra fetch && uv run gold-agents update-data --source yfinance   # secours
 ```
 
+**Sans `make` (Windows, Git Bash ou PowerShell)** : chaque cible appelle la CLI, on peut la lancer directement :
+
+```bash
+uv sync --extra dev              # une fois (équivalent de make install)
+uv run gold-agents download      # = make download
+uv run gold-agents update-data   # = make update-data
+uv run pytest -m "not slow"      # = make test
+```
+
+En PowerShell, la clé se définit avec `$env:TWELVEDATA_API_KEY = "..."` au lieu de `export`.
+
 `make download` refuse d'écraser un CSV existant (option `--force`) et signale si son empreinte ne correspond plus à `CHECKSUMS.txt`. Les chemins se règlent dans `config/config.yaml` (`data.raw_path`, `data.update_path`). Comparaison des sources : voir `docs/sources_donnees_or.md`.
 
 ## Commandes
