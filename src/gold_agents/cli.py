@@ -1,4 +1,4 @@
-"""Interface en ligne de commande (Typer) : prepare, train, backtest, evaluate, verify."""
+"""Interface en ligne de commande (Typer) : download, eda, prepare, train, backtest, evaluate…"""
 
 from __future__ import annotations
 
@@ -99,6 +99,26 @@ def update_data(
         f"{result.n_new_rows} jour(s) ajouté(s) après le {result.last_date_before} "
         f"dans {cfg.data.update_path}."
     )
+
+
+EDA_OUT_OPTION = typer.Option(Path("outputs/eda"), "--out", help="Dossier du rapport.")
+
+
+@app.command()
+def eda(
+    config: Path = CONFIG_OPTION,
+    out_dir: Path = EDA_OUT_OPTION,
+) -> None:
+    """Analyse exploratoire : trous, aberrations, rendements, volatilité, splits."""
+    from gold_agents.eda.report import run_eda, summary_lines
+
+    cfg = load_config(config)
+    if not cfg.data.raw_path.exists():
+        typer.echo(f"{cfg.data.raw_path} absent : lancer d'abord `make download`.", err=True)
+        raise typer.Exit(code=1)
+    result = run_eda(cfg, out_dir)
+    typer.echo("\n".join(summary_lines(result.summary)))
+    typer.echo(f"\nRapport : {result.report_path}  (figures dans {out_dir / 'figures'})")
 
 
 @app.command()

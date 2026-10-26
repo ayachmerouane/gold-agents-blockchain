@@ -23,6 +23,10 @@ ml = [
     "optuna>=3.6",
     "mlflow>=2.12",
 ]
+eda = [
+    "matplotlib>=3.8",
+    "statsmodels>=0.14",
+]
 fetch = [
     "yfinance>=0.2.48",
 ]
@@ -75,3 +79,7 @@ mypy_path = "src"
 packages = ["gold_agents"]
 strict = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["statsmodels.*", "scipy.*"]
+ignore_missing_imports = true

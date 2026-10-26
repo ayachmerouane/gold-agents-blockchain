@@ -19,7 +19,7 @@ jobs:
       - name: Installer Python 3.11 et les dépendances
         run: |
           uv python install 3.11
-          uv sync --extra dev
+          uv sync --extra dev --extra eda
 
       - name: Lint (ruff)
         run: |

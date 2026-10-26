@@ -9,14 +9,15 @@ Investissement **simulé** sur l'or (XAU/USD) à l'aide de **Deep Learning** (LS
 
 ## État d'avancement
 
-Phase 0 (cadrage et socle) : structure du dépôt, configuration validée, CI. Les modules de `src/gold_agents/` sont encore des squelettes.
+Phase 0 (cadrage et socle) : structure du dépôt, configuration validée, CI, téléchargement des données.
+Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et les graphiques. Les autres modules de `src/gold_agents/` sont encore des squelettes.
 
 ## Installation
 
 Prérequis : [uv](https://docs.astral.sh/uv/) (il installe lui-même Python 3.11).
 
 ```bash
-make install        # dépendances de base + outils de dev (pytest, ruff, mypy)
+make install        # dépendances de base + outils de dev (pytest, ruff, mypy) + EDA (matplotlib, statsmodels)
 make install-all    # tout, y compris PyTorch, scikit-learn, MLflow, Streamlit
 uv run pre-commit install   # optionnel : lint automatique avant chaque commit
 ```
@@ -44,15 +45,25 @@ uv sync --extra dev --extra fetch && uv run gold-agents update-data --source yfi
 **Sans `make` (Windows, Git Bash ou PowerShell)** : chaque cible appelle la CLI, on peut la lancer directement :
 
 ```bash
-uv sync --extra dev              # une fois (équivalent de make install)
+uv sync --extra dev --extra eda  # une fois (équivalent de make install)
 uv run gold-agents download      # = make download
 uv run gold-agents update-data   # = make update-data
+uv run gold-agents eda           # = make eda
 uv run pytest -m "not slow"      # = make test
 ```
 
 En PowerShell, la clé se définit avec `$env:TWELVEDATA_API_KEY = "..."` au lieu de `export`.
 
 `make download` refuse d'écraser un CSV existant (option `--force`) et signale si son empreinte ne correspond plus à `CHECKSUMS.txt`. Les chemins se règlent dans `config/config.yaml` (`data.raw_path`, `data.update_path`). Comparaison des sources : voir `docs/sources_donnees_or.md`.
+
+## Analyse exploratoire (phase 1)
+
+`make eda` (ou `uv run gold-agents eda`) lit le CSV Kaggle et, s'il existe, le fichier de mise à jour, puis :
+
+- affiche un résumé d'une quarantaine de lignes dans le terminal ;
+- écrit `outputs/eda/rapport_eda.md`, `outputs/eda/summary.json` et 5 figures dans `outputs/eda/figures/`.
+
+Contrôles : trous de dates et barres de week-end, cohérence OHLC, distribution des rendements (queues épaisses, Jarque-Bera), valeurs aberrantes (z-score robuste, allers-retours suspects), régimes de volatilité, autocorrélation (Ljung-Box) et stationnarité (ADF, KPSS), aperçu du découpage train/val/test et raccord avec la mise à jour API. Tous les seuils et tests sont calculés **sur le train seulement**. Le notebook `notebooks/01_eda.ipynb` appelle les mêmes fonctions.
 
 ## Commandes
 
@@ -64,6 +75,7 @@ En PowerShell, la clé se définit avec `$env:TWELVEDATA_API_KEY = "..."` au lie
 | `make format` | Formatage automatique (ruff) |
 | `make download` | Téléchargement du CSV Kaggle + empreinte |
 | `make update-data` | Ajout des jours récents (Twelve Data) |
+| `make eda` | Analyse exploratoire : résumé dans le terminal, rapport et figures dans `outputs/eda/` |
 | `make data` | Préparation des données |
 | `make train` | Entraînement des modèles |
 | `make backtest` | Simulation multi-agents + écriture du registre |

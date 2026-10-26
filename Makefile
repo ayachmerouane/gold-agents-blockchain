@@ -1,7 +1,7 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data data train backtest evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data eda data train backtest evaluate verify dashboard all
 
-install:          ## Dépendances de base + outils de dev
-	uv sync --extra dev
+install:          ## Dépendances de base + outils de dev + EDA
+	uv sync --extra dev --extra eda
 
 install-all:      ## Tout, y compris PyTorch et le tableau de bord
 	uv sync --all-extras
@@ -30,6 +30,9 @@ download:         ## CSV Kaggle quotidien + empreinte SHA-256 (KAGGLE_API_TOKEN 
 
 update-data:      ## Jours récents via Twelve Data (TWELVEDATA_API_KEY requis)
 	uv run gold-agents update-data
+
+eda:              ## Analyse exploratoire : rapport et figures dans outputs/eda/
+	uv run gold-agents eda
 
 data:
 	uv run gold-agents prepare
