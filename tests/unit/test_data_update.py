@@ -101,11 +101,15 @@ def _fetcher(market: pd.DataFrame, factor: float = 1.001) -> update.Fetcher:
     return fetch
 
 
+def _day_after(market: pd.DataFrame, i: int) -> date:
+    return (market["date"].iloc[i] + pd.Timedelta(days=1)).date()
+
+
 def test_update_appends_only_new_days(tmp_path: Path, market: pd.DataFrame) -> None:
     raw = _write_mt4(tmp_path / "XAU_1d_data.csv", market.iloc[:150])
     raw_bytes = raw.read_bytes()
     out = tmp_path / "XAU_1d_update.csv"
-    today = market["date"].iloc[-1].date()
+    today = _day_after(market, -1)
 
     result = update.update_series(raw, out, _fetcher(market), today=today)
 
@@ -126,8 +130,8 @@ def test_update_appends_only_new_days(tmp_path: Path, market: pd.DataFrame) -> N
 def test_update_continues_from_existing_update_file(tmp_path: Path, market: pd.DataFrame) -> None:
     raw = _write_mt4(tmp_path / "XAU_1d_data.csv", market.iloc[:150])
     out = tmp_path / "XAU_1d_update.csv"
-    update.update_series(raw, out, _fetcher(market), today=market["date"].iloc[169].date())
-    result = update.update_series(raw, out, _fetcher(market), today=market["date"].iloc[-1].date())
+    update.update_series(raw, out, _fetcher(market), today=_day_after(market, 169))
+    result = update.update_series(raw, out, _fetcher(market), today=_day_after(market, -1))
     assert result.last_date_before == market["date"].iloc[169].date()
     assert result.n_new_rows == 30
     assert len(read_update_csv(out)) == 50
@@ -136,12 +140,46 @@ def test_update_continues_from_existing_update_file(tmp_path: Path, market: pd.D
 def test_update_refuses_incoherent_source(tmp_path: Path, market: pd.DataFrame) -> None:
     raw = _write_mt4(tmp_path / "XAU_1d_data.csv", market.iloc[:150])
     out = tmp_path / "XAU_1d_update.csv"
-    today = market["date"].iloc[-1].date()
+    today = _day_after(market, -1)
     with pytest.raises(update.CoherenceError):
         update.update_series(raw, out, _fetcher(market, factor=1.5), today=today)
     assert not out.exists()
     forced = update.update_series(raw, out, _fetcher(market, factor=1.5), today=today, force=True)
     assert forced.n_new_rows == 50
+
+
+def test_update_drops_weekends_and_unclosed_today(tmp_path: Path, market: pd.DataFrame) -> None:
+    raw = _write_mt4(tmp_path / "XAU_1d_data.csv", market.iloc[:150])
+    out = tmp_path / "XAU_1d_update.csv"
+    last_raw = market["date"].iloc[149]
+
+    def fetch_calendar_days(start: date, end: date) -> pd.DataFrame:
+        # Comme Twelve Data en UTC : une barre par jour calendaire, week-ends compris.
+        dates = pd.date_range(start, end, freq="D", tz="UTC")
+        close = market.set_index("date")["close"].reindex(dates).ffill().bfill().to_numpy()
+        df = pd.DataFrame({"date": dates, "open": close, "high": close, "low": close})
+        return normalize(df.assign(close=close), "twelvedata")
+
+    today = market["date"].iloc[159].date()  # un jour ouvré
+    result = update.update_series(raw, out, fetch_calendar_days, today=today)
+    written = read_update_csv(out)
+    assert (written["date"].dt.day_of_week < 5).all()
+    assert written["date"].max().date() < today
+    assert written["date"].min() > last_raw
+    assert result.n_new_rows == len(written) == 9  # jours ouvrés 151 à 159 exclus le jour même
+
+
+def test_update_cleans_weekend_rows_from_older_file(tmp_path: Path, market: pd.DataFrame) -> None:
+    raw = _write_mt4(tmp_path / "XAU_1d_data.csv", market.iloc[:150])
+    out = tmp_path / "XAU_1d_update.csv"
+    saturday = market["date"].iloc[149] + pd.offsets.Week(weekday=5)
+    out.write_text(
+        f"date,open,high,low,close,volume,source\n{saturday:%Y-%m-%d},1,1,1,1,,twelvedata\n",
+        encoding="utf-8",
+    )
+    result = update.update_series(raw, out, _fetcher(market), today=saturday.date())
+    assert (read_update_csv(out)["date"].dt.day_of_week < 5).all()
+    assert result.report is not None
 
 
 # --- CLI ---

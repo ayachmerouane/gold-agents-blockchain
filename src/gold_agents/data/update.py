@@ -144,6 +144,16 @@ class UpdateResult:
     report: CoherenceReport | None
 
 
+def trading_days(df: pd.DataFrame) -> pd.DataFrame:
+    """Retire les samedis et dimanches.
+
+    En UTC, les API renvoient des barres de week-end (réouverture du dimanche soir,
+    cotations résiduelles) que l'export MT4 de Kaggle n'a pas.
+    """
+    weekday: pd.Series = df["date"].dt.day_of_week
+    return df.loc[weekday < 5]
+
+
 def update_series(
     raw_path: Path,
     update_path: Path,
@@ -153,25 +163,32 @@ def update_series(
     overlap_days: int = 60,
     force: bool = False,
 ) -> UpdateResult:
-    """Ajoute à `update_path` les jours manquants depuis la fin de la série connue.
+    """Ajoute à `update_path` les jours clôturés manquants depuis la fin de la série connue.
 
-    La requête recouvre les `overlap_days` derniers jours connus pour vérifier la
-    cohérence ; si le contrôle échoue, rien n'est écrit (sauf `force`).
+    Seuls les jours ouvrés strictement antérieurs à `today` sont ajoutés (la barre du
+    jour n'est pas encore close). La requête recouvre les `overlap_days` derniers jours
+    connus pour vérifier la cohérence ; si le contrôle échoue, rien n'est écrit (sauf `force`).
     """
     raw = read_kaggle_csv(raw_path)
     existing = read_update_csv(update_path) if update_path.exists() else raw.iloc[0:0]
-    existing = existing[existing["date"] > raw["date"].max()]
+    n_before = len(existing)
+    existing = trading_days(existing[existing["date"] > raw["date"].max()])
+    existing = existing[existing["date"].dt.date < today]
     known = normalize_concat([raw, existing])
     last = known["date"].max().date()
-    if last >= today:
+
+    report: CoherenceReport | None = None
+    new = existing.iloc[0:0]
+    if last < today - timedelta(days=1):
+        fetched = trading_days(fetch(last - timedelta(days=overlap_days), today))
+        report = check_coherence(known, fetched)
+        if not report.ok and not force:
+            raise CoherenceError(report)
+        days = fetched["date"].dt.date
+        new = fetched[(days > last) & (days < today)]
+    elif len(existing) == n_before:
         return UpdateResult(last, 0, None)
 
-    fetched = fetch(last - timedelta(days=overlap_days), today)
-    report = check_coherence(known, fetched)
-    if not report.ok and not force:
-        raise CoherenceError(report)
-
-    new = fetched[fetched["date"].dt.date > last]
     out = normalize_concat([existing, new])[COLUMNS].copy()
     out["date"] = out["date"].dt.strftime("%Y-%m-%d")
     update_path.parent.mkdir(parents=True, exist_ok=True)
