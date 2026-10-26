@@ -23,13 +23,25 @@ uv run pre-commit install   # optionnel : lint automatique avant chaque commit
 
 ## Données
 
-Jeu de données Kaggle « XAUUSD Gold Price Tracker: 2004–Present » (quotidien). Le CSV n'est pas versionné : le placer dans `data/raw/`, puis noter son empreinte :
+**Historique (figé)** : Kaggle « [XAUUSD Gold Price Tracker: 2004–Present](https://www.kaggle.com/datasets/novandraanugrah/xauusd-gold-price-historical-data-2004present) », fichier quotidien `XAU_1d_data.csv` (export MetaTrader 4). Train, validation et test sont construits **uniquement** sur ce fichier.
+
+**Mise à jour** : [Twelve Data](https://twelvedata.com) `XAU/USD` (même instrument, au comptant). Les jours postérieurs au CSV Kaggle sont écrits dans un fichier séparé, `data/raw/XAU_1d_update.csv`, après un contrôle de cohérence sur ~60 jours communs (écart des clôtures et corrélation des rendements). Secours sans clé : yfinance `GC=F` (contrat à terme, donc prix légèrement différents).
+
+Les données ne sont pas versionnées et **aucune clé n'est stockée dans le dépôt** :
+
+| Besoin | Où le mettre |
+|---|---|
+| Jeton Kaggle | `~/.kaggle/kaggle.json` (Kaggle > Settings > API > *Create New Token*), ou les variables `KAGGLE_USERNAME` + `KAGGLE_KEY` |
+| Clé Twelve Data (gratuite) | variable d'environnement `TWELVEDATA_API_KEY` (par exemple dans un `.env` local, ignoré par Git) |
 
 ```bash
-sha256sum data/raw/*.csv >> data/raw/CHECKSUMS.txt
+make download                    # télécharge XAU_1d_data.csv et note son SHA-256 dans CHECKSUMS.txt
+export TWELVEDATA_API_KEY=...    # clé personnelle, jamais commitée
+make update-data                 # ajoute les jours manquants (Twelve Data)
+uv sync --extra dev --extra fetch && uv run gold-agents update-data --source yfinance   # secours
 ```
 
-Le chemin du fichier se règle dans `config/config.yaml` (`data.raw_path`).
+`make download` refuse d'écraser un CSV existant (option `--force`) et signale si son empreinte ne correspond plus à `CHECKSUMS.txt`. Les chemins se règlent dans `config/config.yaml` (`data.raw_path`, `data.update_path`). Comparaison des sources : voir `docs/sources_donnees_or.md`.
 
 ## Commandes
 
@@ -39,6 +51,8 @@ Le chemin du fichier se règle dans `config/config.yaml` (`data.raw_path`).
 | `make test` | Tests rapides (`pytest -m "not slow"`) |
 | `make cov` | Tests avec couverture |
 | `make format` | Formatage automatique (ruff) |
+| `make download` | Téléchargement du CSV Kaggle + empreinte |
+| `make update-data` | Ajout des jours récents (Twelve Data) |
 | `make data` | Préparation des données |
 | `make train` | Entraînement des modèles |
 | `make backtest` | Simulation multi-agents + écriture du registre |

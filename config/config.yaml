@@ -5,7 +5,9 @@
 seed: 42
 
 data:
-  raw_path: data/raw/XAU_1d_data.csv
+  raw_path: data/raw/XAU_1d_data.csv          # Kaggle, figé (SHA-256 dans CHECKSUMS.txt)
+  update_path: data/raw/XAU_1d_update.csv    # jours ajoutés par l'API (make update-data)
+  checksums_path: data/raw/CHECKSUMS.txt
   processed_dir: data/processed
 
 splits:
