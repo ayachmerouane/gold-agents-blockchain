@@ -39,7 +39,9 @@ SOURCE_OPTION = typer.Option(UpdateSource.twelvedata, help="API de mise à jour.
 @app.command()
 def download(
     config: Path = CONFIG_OPTION,
-    dataset: str = typer.Option(sources.KAGGLE_DATASET, help="Identifiant Kaggle owner/slug."),
+    dataset: str | None = typer.Option(
+        None, help="Identifiant Kaggle owner/slug (défaut : dataset de la spec, puis repli)."
+    ),
     force: bool = typer.Option(False, "--force", help="Écraser le CSV brut déjà présent."),
 ) -> None:
     """Télécharge le CSV Kaggle quotidien et note son empreinte SHA-256."""
@@ -51,12 +53,17 @@ def download(
         typer.echo(f"{raw_path} existe déjà ({label[status]}) ; --force pour le remplacer.")
         raise typer.Exit(code=0 if status is not False else 1)
     try:
-        path = sources.download_kaggle(raw_path.parent, dataset=dataset, filename=raw_path.name)
+        path, used = sources.download_kaggle(
+            raw_path.parent,
+            datasets=(dataset,) if dataset else sources.KAGGLE_DATASETS,
+            filename=raw_path.name,
+        )
     except sources.SourceError as exc:
         typer.echo(f"Échec du téléchargement : {exc}", err=True)
         raise typer.Exit(code=1) from exc
     digest = update.record_checksum(path, cfg.data.checksums_path)
-    typer.echo(f"{path} téléchargé, SHA-256 {digest} noté dans {cfg.data.checksums_path}.")
+    typer.echo(f"{path} téléchargé depuis kaggle.com/datasets/{used}.")
+    typer.echo(f"SHA-256 {digest} noté dans {cfg.data.checksums_path}.")
 
 
 @app.command("update-data")

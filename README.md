@@ -23,7 +23,7 @@ uv run pre-commit install   # optionnel : lint automatique avant chaque commit
 
 ## Données
 
-**Historique (figé)** : Kaggle « [XAUUSD Gold Price Tracker: 2004–Present](https://www.kaggle.com/datasets/novandraanugrah/xauusd-gold-price-historical-data-2004present) », fichier quotidien `XAU_1d_data.csv` (export MetaTrader 4). Train, validation et test sont construits **uniquement** sur ce fichier.
+**Historique (figé)** : Kaggle « [XAUUSD Gold Price Tracker: 2004–Present](https://www.kaggle.com/datasets/novandraanugrah/xauusd-gold-price-historical-data-2004present) », fichier quotidien `XAU_1d_data.csv` (export MetaTrader 4). Si ce dataset ne contient pas le fichier quotidien, `download` le prend dans la version multi-unités du même auteur ([2004-2026](https://www.kaggle.com/datasets/novandraanugrah/xauusd-gold-price-historical-data-2004-2024)) ; seul ce fichier est téléchargé, pas l'archive complète. Train, validation et test sont construits **uniquement** sur ce fichier.
 
 **Mise à jour** : [Twelve Data](https://twelvedata.com) `XAU/USD` (même instrument, au comptant). Les jours postérieurs au CSV Kaggle sont écrits dans un fichier séparé, `data/raw/XAU_1d_update.csv`, après un contrôle de cohérence sur ~60 jours communs (écart des clôtures et corrélation des rendements). Secours sans clé : yfinance `GC=F` (contrat à terme, donc prix légèrement différents).
 

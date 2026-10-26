@@ -69,19 +69,62 @@ def test_kaggle_auth_missing_explains_how_to_fix(tmp_path: Path) -> None:
         sources.kaggle_auth_header({}, config_dir=tmp_path)
 
 
-def test_download_kaggle_extracts_only_daily_file(tmp_path: Path) -> None:
-    get = FakeGet(_zip({"XAU_1d_data.csv": "daily", "XAU_1h_data.csv": "hourly"}))
-    path = sources.download_kaggle(tmp_path, get=get, headers={"Authorization": "x"})
+class RoutedGet:
+    """Simule Kaggle : un corps par URL, 404 sinon."""
+
+    def __init__(self, routes: dict[str, bytes]) -> None:
+        self.routes = routes
+        self.calls: list[str] = []
+
+    def __call__(self, url: str, headers: Mapping[str, str]) -> bytes:
+        self.calls.append(url)
+        for suffix, body in self.routes.items():
+            if url.endswith(suffix):
+                return body
+        raise sources.SourceError("HTTP 404", status=404)
+
+
+def test_download_kaggle_fetches_only_the_daily_file(tmp_path: Path) -> None:
+    get = RoutedGet({f"{sources.KAGGLE_DATASET}/XAU_1d_data.csv": b"Date;Close\n"})
+    path, used = sources.download_kaggle(tmp_path, get=get, headers={})
     assert path == tmp_path / "XAU_1d_data.csv"
+    assert path.read_bytes() == b"Date;Close\n"
+    assert used == sources.KAGGLE_DATASET
+    assert get.calls == [
+        f"https://www.kaggle.com/api/v1/datasets/download/{sources.KAGGLE_DATASET}/XAU_1d_data.csv"
+    ]
+
+
+def test_download_kaggle_unzips_large_file(tmp_path: Path) -> None:
+    get = RoutedGet({"/XAU_1d_data.csv": _zip({"XAU_1d_data.csv": "daily"})})
+    path, _ = sources.download_kaggle(tmp_path, get=get, headers={})
     assert path.read_text() == "daily"
-    assert not (tmp_path / "XAU_1h_data.csv").exists()
-    url, headers = get.calls[0]
-    assert url.endswith(f"/datasets/download/{sources.KAGGLE_DATASET}")
-    assert headers == {"Authorization": "x"}
 
 
-def test_download_kaggle_missing_file_raises(tmp_path: Path) -> None:
-    get = FakeGet(_zip({"other.csv": "x"}))
+def test_download_kaggle_falls_back_when_daily_file_missing(tmp_path: Path) -> None:
+    # Cas réel : le dataset principal ne contient plus que XAU_1m_data.csv.
+    get = RoutedGet({f"{sources.KAGGLE_DATASET_FALLBACK}/XAU_1d_data.csv": b"daily"})
+    path, used = sources.download_kaggle(tmp_path, get=get, headers={})
+    assert used == sources.KAGGLE_DATASET_FALLBACK
+    assert path.read_bytes() == b"daily"
+    assert len(get.calls) == 2
+
+
+def test_download_kaggle_missing_everywhere_raises(tmp_path: Path) -> None:
+    with pytest.raises(sources.SourceError, match="introuvable"):
+        sources.download_kaggle(tmp_path, get=RoutedGet({}), headers={})
+
+
+def test_download_kaggle_other_http_error_is_not_swallowed(tmp_path: Path) -> None:
+    def get(url: str, headers: Mapping[str, str]) -> bytes:
+        raise sources.SourceError("HTTP 401", status=401)
+
+    with pytest.raises(sources.SourceError, match="401"):
+        sources.download_kaggle(tmp_path, get=get, headers={})
+
+
+def test_download_kaggle_zip_without_file_raises(tmp_path: Path) -> None:
+    get = RoutedGet({"/XAU_1d_data.csv": _zip({"other.csv": "x"})})
     with pytest.raises(sources.SourceError, match="absent de l'archive"):
         sources.download_kaggle(tmp_path, get=get, headers={})
 

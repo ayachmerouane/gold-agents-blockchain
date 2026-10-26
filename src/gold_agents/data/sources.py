@@ -24,12 +24,16 @@ import pandas as pd
 from gold_agents.data.load import normalize
 
 KAGGLE_DATASET = "novandraanugrah/xauusd-gold-price-historical-data-2004present"
+# Même auteur, même export MT4, avec toutes les unités de temps (1 min … 1 mois).
+# Sert de repli quand le dataset principal ne contient plus le fichier quotidien.
+KAGGLE_DATASET_FALLBACK = "novandraanugrah/xauusd-gold-price-historical-data-2004-2024"
+KAGGLE_DATASETS = (KAGGLE_DATASET, KAGGLE_DATASET_FALLBACK)
 KAGGLE_DAILY_FILE = "XAU_1d_data.csv"
 TWELVEDATA_SYMBOL = "XAU/USD"
 TWELVEDATA_KEY_ENV = "TWELVEDATA_API_KEY"
 YFINANCE_SYMBOL = "GC=F"
 
-_KAGGLE_URL = "https://www.kaggle.com/api/v1/datasets/download/{dataset}"
+_KAGGLE_FILE_URL = "https://www.kaggle.com/api/v1/datasets/download/{dataset}/{filename}"
 _TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 _TWELVEDATA_MAX_BARS = 5000
 
@@ -40,6 +44,10 @@ HttpGet = Callable[[str, Mapping[str, str]], bytes]
 class SourceError(RuntimeError):
     """Erreur d'accès ou de format d'une source distante."""
 
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 def http_get(url: str, headers: Mapping[str, str]) -> bytes:
     request = urllib.request.Request(url, headers=dict(headers))
@@ -48,7 +56,7 @@ def http_get(url: str, headers: Mapping[str, str]) -> bytes:
             body: bytes = response.read()
             return body
     except urllib.error.HTTPError as exc:
-        raise SourceError(f"HTTP {exc.code} sur {url.split('?')[0]}") from exc
+        raise SourceError(f"HTTP {exc.code} sur {url.split('?')[0]}", status=exc.code) from exc
     except urllib.error.URLError as exc:
         raise SourceError(f"réseau indisponible ({exc.reason})") from exc
 
@@ -90,31 +98,49 @@ def kaggle_auth_header(
     return {"Authorization": f"Basic {basic}"}
 
 
-def download_kaggle(
-    dest_dir: Path,
-    *,
-    dataset: str = KAGGLE_DATASET,
-    filename: str = KAGGLE_DAILY_FILE,
-    get: HttpGet = http_get,
-    headers: Mapping[str, str] | None = None,
-) -> Path:
-    """Télécharge l'archive du dataset et n'en extrait que `filename` dans `dest_dir`."""
-    headers = kaggle_auth_header() if headers is None else headers
-    body = get(_KAGGLE_URL.format(dataset=dataset), headers)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    target = dest_dir / filename
+def _extract(body: bytes, filename: str, target: Path) -> None:
     try:
         archive = zipfile.ZipFile(io.BytesIO(body))
     except zipfile.BadZipFile:
-        # Petit dataset mono-fichier : Kaggle peut renvoyer le CSV directement.
+        # Kaggle renvoie un petit fichier tel quel, un gros fichier zippé.
         target.write_bytes(body)
-        return target
+        return
     with archive:
         members = [m for m in archive.namelist() if Path(m).name == filename]
         if not members:
             raise SourceError(f"{filename} absent de l'archive Kaggle : {archive.namelist()}")
         target.write_bytes(archive.read(members[0]))
-    return target
+
+
+def download_kaggle(
+    dest_dir: Path,
+    *,
+    datasets: tuple[str, ...] = KAGGLE_DATASETS,
+    filename: str = KAGGLE_DAILY_FILE,
+    get: HttpGet = http_get,
+    headers: Mapping[str, str] | None = None,
+) -> tuple[Path, str]:
+    """Télécharge le seul fichier `filename` (et non toute l'archive) dans `dest_dir`.
+
+    Essaie les datasets dans l'ordre et passe au suivant si le fichier y est absent (404).
+    Renvoie le chemin écrit et le dataset d'où il vient.
+    """
+    headers = kaggle_auth_header() if headers is None else headers
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / filename
+    missing: list[str] = []
+    for dataset in datasets:
+        url = _KAGGLE_FILE_URL.format(dataset=dataset, filename=urllib.parse.quote(filename))
+        try:
+            body = get(url, headers)
+        except SourceError as exc:
+            if exc.status == 404:
+                missing.append(dataset)
+                continue
+            raise
+        _extract(body, filename, target)
+        return target, dataset
+    raise SourceError(f"{filename} introuvable dans les datasets Kaggle : {', '.join(missing)}")
 
 
 # --- Twelve Data ----------------------------------------------------------
