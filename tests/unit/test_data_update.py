@@ -182,6 +182,21 @@ def test_update_cleans_weekend_rows_from_older_file(tmp_path: Path, market: pd.D
     assert result.report is not None
 
 
+def test_coherence_always_checked_against_kaggle(tmp_path: Path, market: pd.DataFrame) -> None:
+    raw = _write_mt4(tmp_path / "XAU_1d_data.csv", market.iloc[:150])
+    out = tmp_path / "XAU_1d_update.csv"
+    today = _day_after(market, -1)
+    # Un premier passage forcé a écrit des prix faux...
+    update.update_series(raw, out, _fetcher(market, factor=1.5), today=today, force=True)
+    # ...la même source reste refusée : elle est comparée au brut Kaggle, pas à elle-même.
+    with pytest.raises(update.CoherenceError):
+        update.update_series(raw, out, _fetcher(market, factor=1.5), today=today)
+    # Une source correcte remplace les lignes fausses.
+    update.update_series(raw, out, _fetcher(market), today=today)
+    expected = market["close"].iloc[150:].to_numpy() * 1.001
+    assert read_update_csv(out)["close"].to_numpy() == pytest.approx(expected)
+
+
 # --- CLI ---
 
 

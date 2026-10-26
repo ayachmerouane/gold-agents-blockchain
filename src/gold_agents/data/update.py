@@ -163,34 +163,30 @@ def update_series(
     overlap_days: int = 60,
     force: bool = False,
 ) -> UpdateResult:
-    """Ajoute à `update_path` les jours clôturés manquants depuis la fin de la série connue.
+    """Réécrit `update_path` avec les jours ouvrés clôturés postérieurs au CSV Kaggle.
 
-    Seuls les jours ouvrés strictement antérieurs à `today` sont ajoutés (la barre du
-    jour n'est pas encore close). La requête recouvre les `overlap_days` derniers jours
-    connus pour vérifier la cohérence ; si le contrôle échoue, rien n'est écrit (sauf `force`).
+    La requête part toujours de `overlap_days` avant la fin du CSV Kaggle : le contrôle
+    de cohérence compare donc l'API au brut figé, jamais à une mise à jour précédente.
+    Seuls les jours strictement antérieurs à `today` sont gardés (la barre du jour
+    n'est pas close). Si le contrôle échoue, rien n'est écrit (sauf `force`).
     """
     raw = read_kaggle_csv(raw_path)
+    raw_last = raw["date"].max()
     existing = read_update_csv(update_path) if update_path.exists() else raw.iloc[0:0]
-    n_before = len(existing)
-    existing = trading_days(existing[existing["date"] > raw["date"].max()])
+    existing = trading_days(existing[existing["date"] > raw_last])
     existing = existing[existing["date"].dt.date < today]
-    known = normalize_concat([raw, existing])
-    last = known["date"].max().date()
+    last = normalize_concat([raw, existing])["date"].max().date()
 
-    report: CoherenceReport | None = None
-    new = existing.iloc[0:0]
-    if last < today - timedelta(days=1):
-        fetched = trading_days(fetch(last - timedelta(days=overlap_days), today))
-        report = check_coherence(known, fetched)
-        if not report.ok and not force:
-            raise CoherenceError(report)
-        days = fetched["date"].dt.date
-        new = fetched[(days > last) & (days < today)]
-    elif len(existing) == n_before:
-        return UpdateResult(last, 0, None)
+    fetched = trading_days(fetch(raw_last.date() - timedelta(days=overlap_days), today))
+    report = check_coherence(raw, fetched)
+    if not report.ok and not force:
+        raise CoherenceError(report)
 
-    out = normalize_concat([existing, new])[COLUMNS].copy()
+    days = fetched["date"].dt.date
+    recent = fetched[(fetched["date"] > raw_last) & (days < today)]
+    out = normalize_concat([existing, recent])[COLUMNS].copy()
+    n_new = int((out["date"].dt.date > last).sum())
     out["date"] = out["date"].dt.strftime("%Y-%m-%d")
     update_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(update_path, index=False)
-    return UpdateResult(last, len(new), report)
+    return UpdateResult(last, n_new, report)
