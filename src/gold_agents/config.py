@@ -66,6 +66,8 @@ class SimulationConfig(_Strict):
     initial_capital: float = Field(gt=0)
     fee_rate: float = Field(ge=0, lt=1)
     slippage: float = Field(ge=0, lt=1)
+    # Taux sans risque annuel pour le Sharpe et le Sortino (§7.4).
+    risk_free_rate: float = Field(default=0.0, ge=0, lt=1)
 
 
 class Config(_Strict):

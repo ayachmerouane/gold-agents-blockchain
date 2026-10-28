@@ -214,10 +214,51 @@ def train(config: Path = CONFIG_OPTION) -> None:
     _todo("train")
 
 
+BACKTEST_OUT_OPTION = typer.Option(
+    Path("outputs/results/backtest"), "--out", help="Dossier des résultats et du schéma."
+)
+LEDGER_DIR_OPTION = typer.Option(Path("outputs/ledger"), "--ledger-dir", help="Registres.")
+
+
 @app.command()
-def backtest(config: Path = CONFIG_OPTION) -> None:
-    """Lance la simulation multi-agents et écrit le registre."""
-    _todo("backtest")
+def backtest(
+    config: Path = CONFIG_OPTION,
+    out_dir: Path = BACKTEST_OUT_OPTION,
+    ledger_dir: Path = LEDGER_DIR_OPTION,
+    costs_factor: float = typer.Option(1.0, "--costs", help="Multiplie frais et slippage."),
+) -> None:
+    """Backtests de référence (Buy & Hold, SMA 20/50) sur le test, registre et schéma."""
+    import pandas as pd
+
+    from gold_agents.data.prepare import FEATURES_FILE
+    from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation import report
+
+    cfg = load_config(config)
+    path = cfg.data.processed_dir / FEATURES_FILE
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `make data`.", err=True)
+        raise typer.Exit(code=1)
+    frame = pd.read_parquet(path, columns=["date", "split", "sample", "open", "close"])
+    runs = report.run_reference_backtests(
+        cfg, frame, sha256_file(path), out_dir, ledger_dir, costs_factor
+    )
+    start, end = report.evaluation_period(frame)
+    typer.echo(f"Période de test : du {start} au {end}, frais x {costs_factor:g}.\n")
+    typer.echo(report.metrics_table(runs).T.to_string())
+    for run in runs:
+        typer.echo(f"\nValeur en fin de mois, {run.result.strategy} (k$) :")
+        months = report.monthly_values(run.result)
+        typer.echo(" ".join(f"{p:%y-%m}={v / 1000:.2f}" for p, v in months.items()))
+        trades = run.result.trades
+        if 0 < len(trades) <= 40:
+            typer.echo(" ".join(f"{t.side[0]}{t.exec_date:%y-%m-%d}" for t in trades))
+    typer.echo("\nTest de falsification sur le registre Buy & Hold :")
+    typer.echo("\n".join(report.tamper_lines(runs[0])))
+    figure = report.backtest_figure(runs, cfg, out_dir / "backtest_test.png")
+    typer.echo(f"\nSchéma : {figure}\nRésultats : {out_dir}  Registres : {ledger_dir}")
+    if not all(run.verification.valid for run in runs):
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -226,10 +267,25 @@ def evaluate(config: Path = CONFIG_OPTION) -> None:
     _todo("evaluate")
 
 
+LEDGERS_ARGUMENT = typer.Argument(None, help="Fichiers .jsonl (défaut : outputs/ledger/).")
+
+
 @app.command()
-def verify(ledger: Path = Path("outputs/ledger/chain.jsonl")) -> None:
-    """Vérifie l'intégrité du registre."""
-    _todo("verify")
+def verify(ledgers: list[Path] | None = LEDGERS_ARGUMENT) -> None:
+    """Vérifie l'intégrité des registres (hash de chaque bloc et liens entre blocs)."""
+    from gold_agents.blockchain.storage import read_jsonl
+
+    paths = ledgers or sorted(Path("outputs/ledger").glob("*.jsonl"))
+    if not paths:
+        typer.echo("Aucun registre trouvé : lancer d'abord `make backtest`.", err=True)
+        raise typer.Exit(code=1)
+    ok = True
+    for path in paths:
+        result = read_jsonl(path).verify()
+        ok &= result.valid
+        typer.echo(f"{path} : {result.describe()}")
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
