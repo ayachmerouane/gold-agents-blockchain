@@ -181,8 +181,31 @@ def clean_data(config: Path = CONFIG_OPTION) -> None:
 
 @app.command()
 def prepare(config: Path = CONFIG_OPTION) -> None:
-    """Prépare les données : nettoyage, features, splits, fenêtres."""
-    _todo("prepare")
+    """Features, cible et découpage train/val/test à partir du dataset propre."""
+    import pandas as pd
+
+    from gold_agents.data import prepare as preparing
+
+    cfg = load_config(config)
+    clean_path = cfg.data.processed_dir / "xau_1d_clean.parquet"
+    if not clean_path.exists():
+        typer.echo(f"{clean_path} absent : lancer d'abord `make clean`.", err=True)
+        raise typer.Exit(code=1)
+    result = preparing.prepare(pd.read_parquet(clean_path), cfg)
+    problems = preparing.check_prepared(result, cfg.features.window)
+    if problems:
+        typer.echo(f"Préparation incohérente : {problems}", err=True)
+        raise typer.Exit(code=1)
+    path = preparing.write_prepared(result, cfg, clean_path)
+    frame = result.frame
+    typer.echo(f"{len(result.columns)} features, fenêtre W = {cfg.features.window} jours.")
+    for name in ("train", "val", "test"):
+        part = frame[frame["sample"] & (frame["split"] == name)]
+        typer.echo(
+            f"  {name:5s} : {len(part)} exemples, du {part['date'].min():%Y-%m-%d} "
+            f"au {part['date'].max():%Y-%m-%d}, {part['target_up'].mean():.1%} de hausses"
+        )
+    typer.echo(f"Écrit : {path} (+ scaler.json ajusté sur le train)")
 
 
 @app.command()

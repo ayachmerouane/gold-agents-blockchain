@@ -24,6 +24,7 @@ features:
   rsi_period: 14
   atr_period: 14
   volatility_window: 20
+  return_lags: [1, 5, 10, 20]   # rendements des k derniers jours
 
 strategy:
   theta_buy: 0.001

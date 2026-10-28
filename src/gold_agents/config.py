@@ -46,6 +46,8 @@ class FeaturesConfig(_Strict):
     rsi_period: int = Field(gt=0)
     atr_period: int = Field(gt=0)
     volatility_window: int = Field(gt=0)
+    # Rendements passés : somme des rendements log des k derniers jours.
+    return_lags: list[int] = Field(default=[1, 5, 10, 20])
 
 
 class StrategyConfig(_Strict):
