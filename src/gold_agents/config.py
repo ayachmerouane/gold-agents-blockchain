@@ -22,6 +22,8 @@ class DataConfig(_Strict):
     # Jours ajoutés par l'API après la fin du CSV Kaggle (jamais utilisés pour l'évaluation).
     update_path: Path = Path("data/raw/XAU_1d_update.csv")
     checksums_path: Path = Path("data/raw/CHECKSUMS.txt")
+    # Jours comblant les trous du CSV Kaggle (Twelve Data, figés par `fill-gaps`).
+    gapfill_path: Path = Path("data/raw/XAU_1d_gapfill.csv")
 
 
 class SplitsConfig(_Strict):

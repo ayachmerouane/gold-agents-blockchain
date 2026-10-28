@@ -28,6 +28,7 @@ outputs/models/*
 !outputs/models/.gitkeep
 outputs/results/*
 !outputs/results/.gitkeep
+outputs/eda/
 mlruns/
 
 # Secrets : la clé privée du registre ne doit jamais être versionnée
