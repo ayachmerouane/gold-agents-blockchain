@@ -41,3 +41,14 @@ simulation:
   fee_rate: 0.001       # 0,1 %
   slippage: 0.0002      # 0,02 %
   risk_free_rate: 0.0   # taux sans risque annuel du Sharpe (0 = Sharpe « brut »)
+
+models:
+  seeds: [0, 1, 2, 3, 4]  # chaque modèle final est entraîné 5 fois (moyenne ± écart-type)
+  max_epochs: 100
+  patience: 15          # early stopping : arrêt après 15 époques sans progrès en validation
+  optuna_trials: 20     # essais Optuna par réseau (LSTM, GRU)
+  lgbm_trials: 30       # essais Optuna pour LightGBM
+  mc_samples: 50        # passages MC Dropout pour l'incertitude
+  direction_alert: 0.60 # précision directionnelle au-delà : fuite de données probable
+  mlflow_uri: sqlite:///mlruns/mlflow.db
+  threads: 0            # threads PyTorch (0 = automatique)

@@ -81,5 +81,5 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["statsmodels.*", "scipy.*"]
+module = ["statsmodels.*", "scipy.*", "sklearn.*", "lightgbm.*", "optuna.*", "mlflow.*"]
 ignore_missing_imports = true

@@ -560,3 +560,4 @@ Après le jalon S8 (évaluation finale prix seuls), dans le temps restant avant 
 |---|---|---|---|
 | 2026-10-26 | 1.0 | ayach (avec Claude) | Première version de l'architecture technique. |
 | 2026-10-26 | 1.1 | ayach (avec Claude) | Ajout de la section 14 : extension future avec facteurs externes au prix (macro, calendrier, sentiment FinBERT, GPR), pièges et étude d'ablation. |
+| 2026-10-28 | 1.2 | ayach (avec Claude) | Phase 4 réalisée : réglage Optuna sur la validation fixe (le walk-forward du §4.3 reste pour la phase 6, à cause du temps de calcul sur CPU), fenêtre W = 30 non réglée, modèles tabulaires sur les features du jour t. |

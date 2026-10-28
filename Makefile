@@ -45,7 +45,7 @@ prepare:          ## Features, cible et découpage dans data/processed/xau_1d_fe
 
 data: clean prepare
 
-train:
+train:            ## Baselines B0-B4 puis LSTM/GRU sur la validation (extra ml requis)
 	uv run gold-agents train
 
 backtest:         ## Buy & Hold + SMA 20/50 sur le test : résultats, registres, schéma
