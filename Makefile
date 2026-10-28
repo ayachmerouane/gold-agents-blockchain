@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda data train backtest evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest evaluate verify dashboard all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -40,8 +40,10 @@ clean:            ## Dataset propre dans data/processed/xau_1d_clean.parquet
 eda:              ## Analyse exploratoire : rapport et figures dans outputs/eda/
 	uv run gold-agents eda
 
-data:
+prepare:          ## Features, cible et découpage dans data/processed/xau_1d_features.parquet
 	uv run gold-agents prepare
+
+data: clean prepare
 
 train:
 	uv run gold-agents train

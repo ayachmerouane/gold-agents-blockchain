@@ -10,7 +10,8 @@ Investissement **simulé** sur l'or (XAU/USD) à l'aide de **Deep Learning** (LS
 ## État d'avancement
 
 Phase 0 (cadrage et socle) : structure du dépôt, configuration validée, CI, téléchargement des données.
-Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et les graphiques. Les autres modules de `src/gold_agents/` sont encore des squelettes.
+Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et les graphiques.
+Phase 2 (features et découpage) : `gold-agents prepare` calcule les indicateurs, la cible et le découpage train/val/test, avec des tests anti-fuite du futur. Les modules des phases suivantes sont encore des squelettes.
 
 ## Installation
 
@@ -51,6 +52,7 @@ uv run gold-agents update-data   # = make update-data
 uv run gold-agents eda           # = make eda
 uv run gold-agents fill-gaps     # = make fill-gaps
 uv run gold-agents clean         # = make clean
+uv run gold-agents prepare       # = make prepare
 uv run pytest -m "not slow"      # = make test
 ```
 
@@ -78,6 +80,18 @@ make clean       # écrit data/processed/xau_1d_clean.parquet (+ xau_1d_clean.js
 
 Les lignes comblées gardent `source = twelvedata` et `filled = True`. Le dataset ajoute aussi les colonnes `ohlc_fixed`, `missing_bdays_before`, `valid_return`, `log_return` et `split`. Les rendements extrêmes, qui sont de vrais événements, sont conservés. Le détail des choix est dans `docs/constats_eda.md`.
 
+## Features, cible et découpage
+
+```bash
+make prepare     # écrit data/processed/xau_1d_features.parquet (+ scaler.json et xau_1d_features.json)
+```
+
+- **Features** (toutes calculées avec le passé seulement) : rendements des 1, 5, 10 et 20 derniers jours ; écart du prix à ses moyennes mobiles SMA/EMA 10, 20, 50 ; RSI 14 ; MACD (rapporté au prix) ; ATR 14 en % du prix ; amplitude du jour ; largeur de Bollinger ; volatilité 20 j ; jour de la semaine (sin, cos). Pas de volume (volume de ticks MT4).
+- **Cible** : `target_return`, le rendement log du lendemain, et `target_up` (1 si hausse).
+- **Découpage** : dates de `config.yaml`. Un jour est un exemple (`sample = True`) si sa fenêtre de W jours et sa cible restent dans son ensemble ; les W premiers jours de validation et de test servent seulement d'historique.
+- **Scaler** : médiane et écart interquartile ajustés sur le train seulement (`scaler.json`).
+- **Tests anti-fuite** (`tests/leakage/`) : features identiques si l'on coupe la série à t ou si l'on remplace le futur par du bruit ; scaler inchangé si val/test changent ; ensembles ordonnés et séparés.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -91,7 +105,8 @@ Les lignes comblées gardent `source = twelvedata` et `filled = True`. Le datase
 | `make fill-gaps` | Comble les trous du CSV Kaggle avec Twelve Data (fichier figé `data/raw/XAU_1d_gapfill.csv`) |
 | `make clean` | Nettoyage : `data/processed/xau_1d_clean.parquet` et sa fiche JSON |
 | `make eda` | Analyse exploratoire : résumé dans le terminal, rapport et figures dans `outputs/eda/` |
-| `make data` | Préparation des données |
+| `make prepare` | Features, cible et découpage : `data/processed/xau_1d_features.parquet` |
+| `make data` | Nettoyage puis préparation (`clean` + `prepare`) |
 | `make train` | Entraînement des modèles |
 | `make backtest` | Simulation multi-agents + écriture du registre |
 | `make evaluate` | Métriques et figures |
