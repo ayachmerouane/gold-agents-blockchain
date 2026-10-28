@@ -217,6 +217,16 @@ def test_train_cli_quick(tmp_path: Path, cfg: Config, clean_series: pd.DataFrame
     assert np.allclose(network.predict(data["val"].x), preds["gru"], atol=1e-7)
 
 
+def test_summary_compares_to_zero_without_b0(data: ForecastData, tmp_path: Path) -> None:
+    from gold_agents.evaluation.forecast_report import summary_table
+    from gold_agents.models.benchmark import Settings, run_benchmark
+
+    bench = run_benchmark(data, Settings(models=("b1_mm20",), seeds=(0,)), tmp_path, log=str)
+    table = summary_table(bench.summary())
+    assert "nan" not in table.to_string()
+    assert table.loc["B1 moyenne 20 j", "vs B0"].startswith(("+", "-"))
+
+
 def test_train_cli_rejects_unknown_model(cfg: Config) -> None:
     result = CliRunner().invoke(app, ["train", "--models", "b0,transformer"])
     assert result.exit_code == 1

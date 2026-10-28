@@ -26,7 +26,8 @@ def _pm(mean: float, std: float, scale: float = 100, digits: int = 3) -> str:
 
 
 def _b0_rmse(summary: pd.DataFrame) -> float:
-    return float(summary["rmse"].to_dict().get("b0", math.nan))
+    """RMSE de B0 (rendement nul), calculée même si B0 n'est pas dans la sélection."""
+    return float(summary["rmse_zero"].iloc[0])
 
 
 def summary_table(summary: pd.DataFrame) -> pd.DataFrame:

@@ -83,6 +83,7 @@ class Benchmark:
                 row[f"{m}_std"] = float(seeds[m].std(ddof=0))
             dm = diebold_mariano(self.y_val, res.prediction, np.zeros_like(self.y_val))
             row["dm_vs_zero"], row["dm_p_value"] = dm.statistic, dm.p_value
+            row["rmse_zero"] = float(np.sqrt(np.mean(self.y_val**2)))  # RMSE de B0
             row.update({k: v for k, v in res.info.items() if k in ("sigma_mean", "coverage_95")})
             rows.append(row)
         return pd.DataFrame(rows).set_index("model")
