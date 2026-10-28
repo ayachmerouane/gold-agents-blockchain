@@ -48,14 +48,14 @@ data: clean prepare
 train:
 	uv run gold-agents train
 
-backtest:
+backtest:         ## Buy & Hold + SMA 20/50 sur le test : résultats, registres, schéma
 	uv run gold-agents backtest
 
 evaluate:
 	uv run gold-agents evaluate
 
-verify:
-	uv run python scripts/verify_ledger.py
+verify:           ## Vérifie les registres de outputs/ledger/
+	uv run gold-agents verify
 
 dashboard:
 	uv run streamlit run dashboard/app.py

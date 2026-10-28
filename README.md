@@ -11,7 +11,8 @@ Investissement **simulé** sur l'or (XAU/USD) à l'aide de **Deep Learning** (LS
 
 Phase 0 (cadrage et socle) : structure du dépôt, configuration validée, CI, téléchargement des données.
 Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et les graphiques.
-Phase 2 (features et découpage) : `gold-agents prepare` calcule les indicateurs, la cible et le découpage train/val/test, avec des tests anti-fuite du futur. Les modules des phases suivantes sont encore des squelettes.
+Phase 2 (features et découpage) : `gold-agents prepare` calcule les indicateurs, la cible et le découpage train/val/test, avec des tests anti-fuite du futur. 
+Phase 3 (moteur, Buy & Hold, blockchain v1) : `gold-agents backtest` fait passer Buy & Hold et le croisement SMA 20/50 par le moteur jour par jour (exécution à l'ouverture du lendemain, frais et slippage) sur la période de test, enregistre chaque jour dans un registre de blocs chaînés par SHA-256 (`outputs/ledger/*.jsonl`), montre qu'une falsification est détectée et dessine le schéma `outputs/results/backtest/backtest_test.png`. `gold-agents verify` revérifie les registres. Les modules des phases suivantes sont encore des squelettes.
 
 ## Installation
 
@@ -92,6 +93,19 @@ make prepare     # écrit data/processed/xau_1d_features.parquet (+ scaler.json 
 - **Scaler** : médiane et écart interquartile ajustés sur le train seulement (`scaler.json`).
 - **Tests anti-fuite** (`tests/leakage/`) : features identiques si l'on coupe la série à t ou si l'on remplace le futur par du bruit ; scaler inchangé si val/test changent ; ensembles ordonnés et séparés.
 
+## Backtest de référence et registre (phase 3)
+
+```bash
+make backtest    # Buy & Hold + SMA 20/50 sur le test, registres et schéma
+make verify      # revérifie tous les registres de outputs/ledger/
+```
+
+- **Moteur** (`simulation/`) : chaque jour, l'ordre décidé la veille est exécuté à l'**ouverture** (frais 0,1 % + slippage 0,02 % de `config.yaml`), le portefeuille est valorisé à la clôture, puis la stratégie décide en ne voyant que l'historique jusqu'à ce jour. Pas de levier ni de vente à découvert.
+- **Période** : les jours d'exemple du test (les mêmes que pour les futurs modèles), données Kaggle seulement.
+- **Stratégies** : Buy & Hold (achat au premier jour, référence exigée) et croisement SMA 20/50 (règle technique exigée, montre des achats et des ventes).
+- **Registre v1** (`blockchain/`) : un bloc genèse (config complète + empreinte SHA-256 du fichier de features) puis un bloc par jour (trade, décision, portefeuille). Chaque bloc porte le hash du précédent ; la vérification recalcule tout et donne le premier bloc fautif. La commande falsifie aussi des copies du registre pour montrer que c'est détecté. Merkle, signature Ed25519 et `verify_ledger.py` autonome : phase 7.
+- **Sorties** : `outputs/results/backtest/` (`metrics.json`, courbes et trades en CSV, schéma `backtest_test.png`) et `outputs/ledger/<stratégie>.jsonl`. `--costs 2` double frais et slippage (sensibilité).
+
 ## Commandes
 
 | Commande | Rôle |
@@ -108,9 +122,9 @@ make prepare     # écrit data/processed/xau_1d_features.parquet (+ scaler.json 
 | `make prepare` | Features, cible et découpage : `data/processed/xau_1d_features.parquet` |
 | `make data` | Nettoyage puis préparation (`clean` + `prepare`) |
 | `make train` | Entraînement des modèles |
-| `make backtest` | Simulation multi-agents + écriture du registre |
+| `make backtest` | Buy & Hold et SMA 20/50 sur le test : métriques, registres, schéma |
 | `make evaluate` | Métriques et figures |
-| `make verify` | Vérification du registre |
+| `make verify` | Vérification des registres de `outputs/ledger/` |
 | `make dashboard` | Tableau de bord Streamlit |
 | `make all` | Chaîne complète |
 

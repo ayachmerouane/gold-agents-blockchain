@@ -29,6 +29,8 @@ outputs/models/*
 outputs/results/*
 !outputs/results/.gitkeep
 outputs/eda/
+# Registres des backtests : versionnés seulement au rendu final (phase 7, §8.3)
+outputs/ledger/*.jsonl
 mlruns/
 
 # Secrets : la clé privée du registre ne doit jamais être versionnée

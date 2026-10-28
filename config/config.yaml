@@ -40,3 +40,4 @@ simulation:
   initial_capital: 10000.0
   fee_rate: 0.001       # 0,1 %
   slippage: 0.0002      # 0,02 %
+  risk_free_rate: 0.0   # taux sans risque annuel du Sharpe (0 = Sharpe « brut »)
