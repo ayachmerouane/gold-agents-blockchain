@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data eda data train backtest evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda data train backtest evaluate verify dashboard all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -30,6 +30,12 @@ download:         ## CSV Kaggle quotidien + empreinte SHA-256 (KAGGLE_API_TOKEN 
 
 update-data:      ## Jours récents via Twelve Data (TWELVEDATA_API_KEY requis)
 	uv run gold-agents update-data
+
+fill-gaps:        ## Comble les trous du CSV Kaggle avec Twelve Data (TWELVEDATA_API_KEY requis)
+	uv run gold-agents fill-gaps
+
+clean:            ## Dataset propre dans data/processed/xau_1d_clean.parquet
+	uv run gold-agents clean
 
 eda:              ## Analyse exploratoire : rapport et figures dans outputs/eda/
 	uv run gold-agents eda

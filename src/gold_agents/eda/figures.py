@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 
 from gold_agents.config import SplitsConfig
-from gold_agents.eda.analysis import assign_split, rolling_volatility, train_part
+from gold_agents.data.splits import assign_split
+from gold_agents.eda.analysis import rolling_volatility, train_part
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes

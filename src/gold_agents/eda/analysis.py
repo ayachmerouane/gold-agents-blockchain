@@ -19,9 +19,9 @@ import numpy as np
 import pandas as pd
 
 from gold_agents.config import SplitsConfig
+from gold_agents.data.splits import SPLIT_NAMES, assign_split
 
 TRADING_DAYS = 252
-SPLIT_NAMES = ("train", "val", "test")
 _WEEKDAYS = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
 # Facteur qui rend le MAD comparable à un écart-type pour une loi normale.
 _MAD_TO_STD = 1.4826
@@ -39,16 +39,6 @@ def log_returns(df: pd.DataFrame) -> pd.Series:
     close = df.set_index("date")["close"]
     r: pd.Series = np.log(close).diff().dropna().rename("log_return")
     return r
-
-
-def assign_split(dates: pd.Series | pd.Index, splits: SplitsConfig) -> pd.Series:
-    """Nom de l'ensemble (train/val/test) de chaque date, ou `None` hors ensembles."""
-    days = pd.Series(pd.DatetimeIndex(dates).tz_localize(None).date, index=dates)
-    out = pd.Series(None, index=dates, dtype="object")
-    out[days <= splits.train_end] = "train"
-    out[(days >= splits.val_start) & (days <= splits.val_end)] = "val"
-    out[days >= splits.test_start] = "test"
-    return out
 
 
 def train_part(r: pd.Series, splits: SplitsConfig) -> pd.Series:

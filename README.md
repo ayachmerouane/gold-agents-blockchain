@@ -49,6 +49,8 @@ uv sync --extra dev --extra eda  # une fois (équivalent de make install)
 uv run gold-agents download      # = make download
 uv run gold-agents update-data   # = make update-data
 uv run gold-agents eda           # = make eda
+uv run gold-agents fill-gaps     # = make fill-gaps
+uv run gold-agents clean         # = make clean
 uv run pytest -m "not slow"      # = make test
 ```
 
@@ -65,6 +67,17 @@ En PowerShell, la clé se définit avec `$env:TWELVEDATA_API_KEY = "..."` au lie
 
 Contrôles : trous de dates et barres de week-end, cohérence OHLC, distribution des rendements (queues épaisses, Jarque-Bera), valeurs aberrantes (z-score robuste, allers-retours suspects), régimes de volatilité, autocorrélation (Ljung-Box) et stationnarité (ADF, KPSS), aperçu du découpage train/val/test et raccord avec la mise à jour API. Tous les seuils et tests sont calculés **sur le train seulement**. **Notebook** : `notebooks/01_eda_nettoyage.ipynb` parcourt les données pas à pas (graphes, relations entre variables, nettoyage) et écrit `data/processed/xau_1d_clean.parquet`. Pour l'ouvrir : `uv run --with jupyterlab jupyter lab notebooks/01_eda_nettoyage.ipynb`.
 
+## Nettoyage
+
+Le CSV Kaggle a deux trous anormaux, tous les deux dans le test : 22 jours ouvrés entre le 2025-09-12 et le 2025-10-15, et 6 jours entre le 2026-01-13 et le 2026-01-22. Ils sont **comblés avec Twelve Data**, le même instrument XAU/USD :
+
+```bash
+make fill-gaps   # télécharge les jours manquants, contrôle leur cohérence avec Kaggle, fige data/raw/XAU_1d_gapfill.csv
+make clean       # écrit data/processed/xau_1d_clean.parquet (+ xau_1d_clean.json)
+```
+
+Les lignes comblées gardent `source = twelvedata` et `filled = True`. Le dataset ajoute aussi les colonnes `ohlc_fixed`, `missing_bdays_before`, `valid_return`, `log_return` et `split`. Les rendements extrêmes, qui sont de vrais événements, sont conservés. Le détail des choix est dans `docs/constats_eda.md`.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -75,6 +88,8 @@ Contrôles : trous de dates et barres de week-end, cohérence OHLC, distribution
 | `make format` | Formatage automatique (ruff) |
 | `make download` | Téléchargement du CSV Kaggle + empreinte |
 | `make update-data` | Ajout des jours récents (Twelve Data) |
+| `make fill-gaps` | Comble les trous du CSV Kaggle avec Twelve Data (fichier figé `data/raw/XAU_1d_gapfill.csv`) |
+| `make clean` | Nettoyage : `data/processed/xau_1d_clean.parquet` et sa fiche JSON |
 | `make eda` | Analyse exploratoire : résumé dans le terminal, rapport et figures dans `outputs/eda/` |
 | `make data` | Préparation des données |
 | `make train` | Entraînement des modèles |

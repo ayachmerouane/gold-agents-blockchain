@@ -66,8 +66,8 @@ Entre la dernière clôture Kaggle (2026-01-30) et la première clôture Twelve 
 
 1. Garder les valeurs extrêmes réelles (pas d'écrêtage des rendements). Leur effet est géré par la perte de Huber et le RobustScaler.
 2. Ne pas utiliser le volume comme feature (volume de ticks MT4).
-3. **Trous 2025-09 et 2026-01** : décision en cours (voir la PR et le fil du projet). Options :
-   - (a) les combler avec Twelve Data (même instrument), en marquant ces lignes ;
-   - (b) les laisser et invalider les rendements et fenêtres qui les traversent ;
-   - (c) arrêter le test au 2025-09-12.
-4. Règle générale dans `clean.py` : tout trou de plus de 5 jours ouvrés est signalé, et le rendement qui le traverse n'est jamais traité comme un rendement d'un jour.
+3. **Trous 2025-09 et 2026-01 : comblés avec Twelve Data** (décision du 28/10/2026). C'est le même instrument XAU/USD au comptant. Avant d'accepter les barres, on vérifie qu'elles collent à Kaggle sur les ~30 jours ouvrés autour de chaque trou (écart des clôtures et corrélation des rendements). Les 28 jours sont figés dans `data/raw/XAU_1d_gapfill.csv`, avec leur empreinte dans `CHECKSUMS.txt`, et marqués `source = twelvedata` et `filled = True`. Options écartées :
+   - masquer les rendements qui traversent les trous, car on perdait environ un mois de test ;
+   - couper le test au 2025-09-12, car on perdait environ 95 jours ;
+   - interpoler, car on aurait inventé des prix.
+4. Règle générale dans `clean.py` : tout trou de plus de 3 jours ouvrés est un trou d'export. S'il n'est pas comblé, le rendement qui le traverse est marqué `valid_return = False` et n'est jamais traité comme un rendement d'un jour.
