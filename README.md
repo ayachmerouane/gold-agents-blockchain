@@ -12,7 +12,8 @@ Investissement **simulé** sur l'or (XAU/USD) à l'aide de **Deep Learning** (LS
 Phase 0 (cadrage et socle) : structure du dépôt, configuration validée, CI, téléchargement des données.
 Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et les graphiques.
 Phase 2 (features et découpage) : `gold-agents prepare` calcule les indicateurs, la cible et le découpage train/val/test, avec des tests anti-fuite du futur. 
-Phase 3 (moteur, Buy & Hold, blockchain v1) : `gold-agents backtest` fait passer Buy & Hold et le croisement SMA 20/50 par le moteur jour par jour (exécution à l'ouverture du lendemain, frais et slippage) sur la période de test, enregistre chaque jour dans un registre de blocs chaînés par SHA-256 (`outputs/ledger/*.jsonl`), montre qu'une falsification est détectée et dessine le schéma `outputs/results/backtest/backtest_test.png`. `gold-agents verify` revérifie les registres. Les modules des phases suivantes sont encore des squelettes.
+Phase 3 (moteur, Buy & Hold, blockchain v1) : `gold-agents backtest` fait passer Buy & Hold et le croisement SMA 20/50 par le moteur jour par jour (exécution à l'ouverture du lendemain, frais et slippage) sur la période de test, enregistre chaque jour dans un registre de blocs chaînés par SHA-256 (`outputs/ledger/*.jsonl`), montre qu'une falsification est détectée et dessine le schéma `outputs/results/backtest/backtest_test.png`. `gold-agents verify` revérifie les registres.
+Phase 4 (baselines puis LSTM/GRU) : `gold-agents train` compare sur la validation les baselines B0 à B4 aux réseaux LSTM et GRU (Optuna, MLflow, early stopping, 5 graines) et dessine `outputs/results/forecast/forecast_val.png`. Les modules des phases suivantes sont encore des squelettes.
 
 ## Installation
 
@@ -106,6 +107,24 @@ make verify      # revérifie tous les registres de outputs/ledger/
 - **Registre v1** (`blockchain/`) : un bloc genèse (config complète + empreinte SHA-256 du fichier de features) puis un bloc par jour (trade, décision, portefeuille). Chaque bloc porte le hash du précédent ; la vérification recalcule tout et donne le premier bloc fautif. La commande falsifie aussi des copies du registre pour montrer que c'est détecté. Merkle, signature Ed25519 et `verify_ledger.py` autonome : phase 7.
 - **Sorties** : `outputs/results/backtest/` (`metrics.json`, courbes et trades en CSV, schéma `backtest_test.png`) et `outputs/ledger/<stratégie>.jsonl`. `--costs 2` double frais et slippage (sensibilité).
 
+## Modèles de prévision (phase 4)
+
+```bash
+uv sync --extra dev --extra eda --extra ml   # PyTorch, scikit-learn, LightGBM, Optuna, MLflow
+uv run gold-agents train --quick             # essai de la chaîne en 1 à 2 minutes
+uv run gold-agents train                     # run complet (environ 30 à 60 min sur CPU)
+uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db   # essais Optuna dans le navigateur
+```
+
+- **Tâche** : à partir des 30 derniers jours (20 features), prévoir le rendement log du lendemain (régression).
+- **Baselines** : B0 rendement nul, B1 rendement d'hier (et moyenne des 20 derniers jours), B2 ARIMA (ordre au meilleur AIC sur le train, paramètres figés ensuite), B3 Ridge et B4 LightGBM sur les features du jour.
+- **Réseaux** : M1 LSTM et M2 GRU petits (1-2 couches, 32-64 unités, dropout), AdamW, gradient clipping, early stopping (patience 15) ; E = moyenne LSTM + GRU.
+- **Réglage** : Optuna (20 essais par réseau, 30 pour LightGBM, abandon tôt des essais sans avenir) sur la validation ; chaque essai est suivi dans MLflow (`mlruns/`, hors Git). Puis 5 graines : moyenne ± écart-type.
+- **Sur- et sous-apprentissage** : early stopping, dropout et weight decay ; courbes train/validation des réseaux dans le schéma ; colonnes « vs B0 train » et « vs B0 » (validation) : un gain en train qui disparaît en validation signale un surapprentissage, aucun gain même en train signale un modèle qui n'a rien appris.
+- **Mesures** : MAE, RMSE, précision directionnelle, gain sur B0, test de Diebold-Mariano contre B0 ; incertitude par MC Dropout (50 passages). **Alerte** au-delà de 60 % de bonnes directions (fuite probable).
+- **Le test n'est pas utilisé** : il est réservé à l'évaluation finale (phase 8).
+- **Sorties** : `outputs/results/forecast/` (`summary_val.csv`, métriques par graine, prévisions de validation, schéma) et `outputs/models/<lstm|gru>/` (poids de chaque graine + `model.json`). Options : `--models lstm,gru`, `--trials 10`, `--no-mlflow`.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -121,7 +140,7 @@ make verify      # revérifie tous les registres de outputs/ledger/
 | `make eda` | Analyse exploratoire : résumé dans le terminal, rapport et figures dans `outputs/eda/` |
 | `make prepare` | Features, cible et découpage : `data/processed/xau_1d_features.parquet` |
 | `make data` | Nettoyage puis préparation (`clean` + `prepare`) |
-| `make train` | Entraînement des modèles |
+| `make train` | Baselines B0-B4, LSTM et GRU : tableau comparatif sur la validation, schéma |
 | `make backtest` | Buy & Hold et SMA 20/50 sur le test : métriques, registres, schéma |
 | `make evaluate` | Métriques et figures |
 | `make verify` | Vérification des registres de `outputs/ledger/` |

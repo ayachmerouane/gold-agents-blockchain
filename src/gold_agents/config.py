@@ -70,6 +70,20 @@ class SimulationConfig(_Strict):
     risk_free_rate: float = Field(default=0.0, ge=0, lt=1)
 
 
+class ModelsConfig(_Strict):
+    """Entraînement des modèles de prévision (§5.3). Les défauts tiennent sur un CPU."""
+
+    seeds: list[int] = Field(default=[0, 1, 2, 3, 4], min_length=1)
+    max_epochs: int = Field(default=100, gt=0)
+    patience: int = Field(default=15, gt=0)  # early stopping sur la perte de validation
+    optuna_trials: int = Field(default=20, gt=0)  # essais Optuna par réseau (LSTM, GRU)
+    lgbm_trials: int = Field(default=30, gt=0)  # essais Optuna pour LightGBM
+    mc_samples: int = Field(default=50, gt=0)  # passages MC Dropout (incertitude)
+    direction_alert: float = Field(default=0.60, gt=0.5, lt=1)  # au-delà : fuite probable
+    mlflow_uri: str = "sqlite:///mlruns/mlflow.db"
+    threads: int = Field(default=0, ge=0)  # threads PyTorch (0 = choix de PyTorch)
+
+
 class Config(_Strict):
     seed: int
     data: DataConfig
@@ -78,6 +92,7 @@ class Config(_Strict):
     strategy: StrategyConfig
     risk: RiskConfig
     simulation: SimulationConfig
+    models: ModelsConfig = ModelsConfig()
 
 
 def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:

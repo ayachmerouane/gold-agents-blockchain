@@ -208,10 +208,78 @@ def prepare(config: Path = CONFIG_OPTION) -> None:
     typer.echo(f"Écrit : {path} (+ scaler.json ajusté sur le train)")
 
 
+TRAIN_OUT_OPTION = typer.Option(
+    Path("outputs/results/forecast"), "--out", help="Dossier des résultats et du schéma."
+)
+MODELS_DIR_OPTION = typer.Option(Path("outputs/models"), "--models-dir", help="Poids.")
+
+
 @app.command()
-def train(config: Path = CONFIG_OPTION) -> None:
-    """Entraîne les modèles."""
-    _todo("train")
+def train(
+    config: Path = CONFIG_OPTION,
+    out_dir: Path = TRAIN_OUT_OPTION,
+    models_dir: Path = MODELS_DIR_OPTION,
+    models: str = typer.Option(
+        "all", help="Modèles, séparés par des virgules : b0,b1,b1_mm20,b2,b3,b4,lstm,gru,ensemble."
+    ),
+    trials: int | None = typer.Option(None, help="Essais Optuna par réseau (défaut : config)."),
+    quick: bool = typer.Option(
+        False, "--quick", help="Essai rapide : 3 essais, 5 époques, 2 graines (vérifie la chaîne)."
+    ),
+    mlflow: bool = typer.Option(True, "--mlflow/--no-mlflow", help="Suivi des essais MLflow."),
+) -> None:
+    """Baselines B0-B4 puis LSTM et GRU : tableau comparatif sur la validation."""
+    import time
+
+    from gold_agents.data.prepare import FEATURES_FILE, load_prepared
+    from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation.forecast_report import forecast_figure, summary_table
+    from gold_agents.models import benchmark as bm
+    from gold_agents.models.dataset import build_forecast_data
+
+    chosen = bm.ALL_MODELS if models == "all" else tuple(m.strip() for m in models.split(","))
+    unknown = set(chosen) - set(bm.ALL_MODELS)
+    if unknown:
+        typer.echo(f"Modèles inconnus : {sorted(unknown)}", err=True)
+        raise typer.Exit(code=1)
+    cfg = load_config(config)
+    path = cfg.data.processed_dir / FEATURES_FILE
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `make data`.", err=True)
+        raise typer.Exit(code=1)
+    mc = cfg.models
+    settings = bm.Settings(
+        models=chosen,
+        seeds=tuple(mc.seeds[:2] if quick else mc.seeds),
+        trials=3 if quick else (trials or mc.optuna_trials),
+        lgbm_trials=3 if quick else mc.lgbm_trials,
+        max_epochs=5 if quick else mc.max_epochs,
+        patience=mc.patience,
+        mc_samples=mc.mc_samples,
+        direction_alert=mc.direction_alert,
+        threads=mc.threads,
+        mlflow_uri=mc.mlflow_uri if mlflow else None,
+    )
+    frame, scaler = load_prepared(cfg.data.processed_dir)
+    data = build_forecast_data(frame, scaler, cfg.features.window)
+    typer.echo(
+        f"{len(data.columns)} features, fenêtre {data.window} jours : "
+        f"train {len(data['train'].y)}, validation {len(data['val'].y)} exemples "
+        f"(le test n'est pas utilisé). Graines {list(settings.seeds)}."
+    )
+    start = time.perf_counter()
+    bench = bm.run_benchmark(data, settings, models_dir, log=typer.echo)
+    summary = bm.write_results(bench, out_dir, {"data_sha256": sha256_file(path), "quick": quick})
+    share_up = float((data["val"].y > 0).mean())
+    figure = forecast_figure(bench, share_up, mc.direction_alert, out_dir / "forecast_val.png")
+    typer.echo(f"\nRésultats sur la validation ({time.perf_counter() - start:.0f} s au total) :")
+    typer.echo(summary_table(summary).to_string())
+    typer.echo(f"Toujours « hausse » : {share_up:.1%} de bonnes directions.")
+    for alert in bench.alerts:
+        typer.echo(f"ALERTE : {alert}")
+    typer.echo(f"\nSchéma : {figure}\nRésultats : {out_dir}  Poids : {models_dir}")
+    if mlflow:
+        typer.echo(f"Suivi MLflow : uv run mlflow ui --backend-store-uri {mc.mlflow_uri}")
 
 
 BACKTEST_OUT_OPTION = typer.Option(
