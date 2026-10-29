@@ -120,6 +120,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db   # essais Optun
 - **Baselines** : B0 rendement nul, B1 rendement d'hier (et moyenne des 20 derniers jours), B2 ARIMA (ordre au meilleur AIC sur le train, paramètres figés ensuite), B3 Ridge et B4 LightGBM sur les features du jour.
 - **Réseaux** : M1 LSTM et M2 GRU petits (1-2 couches, 32-64 unités, dropout), AdamW, gradient clipping, early stopping (patience 15) ; E = moyenne LSTM + GRU.
 - **Réglage** : Optuna (20 essais par réseau, 30 pour LightGBM, abandon tôt des essais sans avenir) sur la validation ; chaque essai est suivi dans MLflow (`mlruns/`, hors Git). Puis 5 graines : moyenne ± écart-type.
+- **Sur- et sous-apprentissage** : early stopping, dropout et weight decay ; courbes train/validation des réseaux dans le schéma ; colonnes « vs B0 train » et « vs B0 » (validation) : un gain en train qui disparaît en validation signale un surapprentissage, aucun gain même en train signale un modèle qui n'a rien appris.
 - **Mesures** : MAE, RMSE, précision directionnelle, gain sur B0, test de Diebold-Mariano contre B0 ; incertitude par MC Dropout (50 passages). **Alerte** au-delà de 60 % de bonnes directions (fuite probable).
 - **Le test n'est pas utilisé** : il est réservé à l'évaluation finale (phase 8).
 - **Sorties** : `outputs/results/forecast/` (`summary_val.csv`, métriques par graine, prévisions de validation, schéma) et `outputs/models/<lstm|gru>/` (poids de chaque graine + `model.json`). Options : `--models lstm,gru`, `--trials 10`, `--no-mlflow`.

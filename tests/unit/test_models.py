@@ -207,6 +207,10 @@ def test_train_cli_quick(tmp_path: Path, cfg: Config, clean_series: pd.DataFrame
         "ensemble",
     ]
     assert (summary["rmse"] > 0).all()
+    # Diagnostic sur- / sous-apprentissage : erreur train de chaque modèle, B0 à 0 %.
+    assert summary["gain_train"].notna().all()
+    assert summary.loc["b0", "gain_train"] == pytest.approx(0)
+    assert "vs B0 train" in result.output
     assert (out / "forecast_val.png").stat().st_size > 10_000
 
     # Les poids sauvegardés redonnent la prévision moyenne écrite dans les résultats.

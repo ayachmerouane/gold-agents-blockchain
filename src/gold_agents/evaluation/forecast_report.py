@@ -39,6 +39,7 @@ def summary_table(summary: pd.DataFrame) -> pd.DataFrame:
             "MAE (%)": _pm(r["mae"], r["mae_std"]),
             "RMSE (%)": _pm(r["rmse"], r["rmse_std"]),
             "vs B0": "-" if key == "b0" else f"{(r['rmse'] / rmse0 - 1):+.2%}",
+            "vs B0 train": "-" if key == "b0" else f"{r['gain_train']:+.2%}",
             "Direction": _pm(r["direction"], r["direction_std"], digits=1),
             "DM p": "-" if key == "b0" else f"{r['dm_p_value']:.2f}",
             "Graines": int(r["n_seeds"]),

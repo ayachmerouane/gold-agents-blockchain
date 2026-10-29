@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from gold_agents.evaluation.forecast_metrics import diebold_mariano, forecast_metrics
+from gold_agents.evaluation.forecast_metrics import diebold_mariano, forecast_metrics, rmse
 from gold_agents.models import baselines
 from gold_agents.models.dataset import ForecastData
 from gold_agents.models.predict import save_network
@@ -60,15 +60,17 @@ class Settings:
 @dataclass
 class ModelResult:
     key: str
-    per_seed: list[dict[str, float]]
+    per_seed: list[dict[str, float]]  # métriques de validation de chaque graine
     prediction: np.ndarray  # moyenne des graines, échelle des rendements
     info: dict[str, Any] = field(default_factory=dict)
+    train_rmse: list[float] = field(default_factory=list)  # RMSE sur le train, par graine
 
 
 @dataclass
 class Benchmark:
     results: dict[str, ModelResult]
     y_val: np.ndarray
+    y_train: np.ndarray
     dates: pd.DatetimeIndex
     histories: dict[str, list[tuple[float, float]]]
     alerts: list[str]
@@ -84,6 +86,14 @@ class Benchmark:
             dm = diebold_mariano(self.y_val, res.prediction, np.zeros_like(self.y_val))
             row["dm_vs_zero"], row["dm_p_value"] = dm.statistic, dm.p_value
             row["rmse_zero"] = float(np.sqrt(np.mean(self.y_val**2)))  # RMSE de B0
+            # Diagnostic sur- / sous-apprentissage : gain sur B0 en train et en validation.
+            # Un gain fort en train qui disparaît en validation = surapprentissage ; aucun
+            # gain même en train = le modèle n'a rien appris (sous-apprentissage ou signal
+            # absent).
+            row["rmse_train"] = float(np.mean(res.train_rmse))
+            row["rmse_zero_train"] = float(np.sqrt(np.mean(self.y_train**2)))
+            row["gain_train"] = row["rmse_train"] / row["rmse_zero_train"] - 1
+            row["gain_val"] = row["rmse"] / row["rmse_zero"] - 1
             row.update({k: v for k, v in res.info.items() if k in ("sigma_mean", "coverage_95")})
             rows.append(row)
         return pd.DataFrame(rows).set_index("model")
@@ -146,14 +156,20 @@ def run_benchmark(
         torch.set_num_threads(settings.threads)
     tracker = Tracker(settings.mlflow_uri)
     train, val = data["train"], data["val"]
-    y_val = val.y.astype("float64")
+    y_val, y_train = val.y.astype("float64"), train.y.astype("float64")
     results: dict[str, ModelResult] = {}
     histories: dict[str, list[tuple[float, float]]] = {}
     wanted = set(settings.models)
 
-    def add(key: str, preds: list[np.ndarray], info: dict[str, Any] | None = None) -> None:
+    def add(
+        key: str,
+        preds: list[np.ndarray],
+        train_preds: list[np.ndarray],
+        info: dict[str, Any] | None = None,
+    ) -> None:
         per_seed = [forecast_metrics(y_val, p) for p in preds]
-        results[key] = ModelResult(key, per_seed, np.mean(preds, axis=0), info or {})
+        train_rmse = [rmse(y_train, p) for p in train_preds]
+        results[key] = ModelResult(key, per_seed, np.mean(preds, axis=0), info or {}, train_rmse)
         m = results[key].per_seed[0]
         log(f"  {LABELS[key]:22s} RMSE {m['rmse']:.5f}  direction {m['direction']:.1%}")
         for seed, metrics in zip(settings.seeds, per_seed, strict=False):
@@ -166,30 +182,55 @@ def run_benchmark(
 
     log("Baselines :")
     if "b0" in wanted:
-        add("b0", [baselines.zero(len(y_val))])
+        add("b0", [baselines.zero(len(y_val))], [baselines.zero(len(y_train))])
     if "b1" in wanted:
-        add("b1", [baselines.last_return(data.frame, val.rows)])
+        add(
+            "b1",
+            [baselines.last_return(data.frame, val.rows)],
+            [baselines.last_return(data.frame, train.rows)],
+        )
     if "b1_mm20" in wanted:
-        add("b1_mm20", [baselines.mean_return(data.frame, val.rows, 20)])
+        add(
+            "b1_mm20",
+            [baselines.mean_return(data.frame, val.rows, 20)],
+            [baselines.mean_return(data.frame, train.rows, 20)],
+        )
     if "b2" in wanted:
         arima = baselines.fit_arima(data.frame)
-        add("b2", [arima.predict(data.frame, val.rows)], {"order": str(arima.order)})
+        add(
+            "b2",
+            [arima.predict(data.frame, val.rows)],
+            [arima.predict(data.frame, train.rows)],
+            {"order": str(arima.order)},
+        )
     if "b3" in wanted:
         ridge, alpha = baselines.fit_ridge(train.tabular, train.y, val.tabular, val.y)
-        add("b3", [ridge.predict(val.tabular).astype("float64")], {"alpha": alpha})
+        add(
+            "b3",
+            [ridge.predict(val.tabular).astype("float64")],
+            [ridge.predict(train.tabular).astype("float64")],
+            {"alpha": alpha},
+        )
     if "b4" in wanted:
         add("b4", *_lightgbm(data, settings, tracker, log))
 
-    nets: dict[str, list[np.ndarray]] = {}
+    nets: dict[str, tuple[list[np.ndarray], list[np.ndarray]]] = {}
     for kind in NETWORKS:
         if kind in wanted or "ensemble" in wanted:
-            preds, info, history = _network(kind, data, settings, tracker, models_dir, log)
+            preds, train_preds, info, history = _network(
+                kind, data, settings, tracker, models_dir, log
+            )
             histories[kind] = history
-            nets[kind] = preds
+            nets[kind] = preds, train_preds
             if kind in wanted:
-                add(kind, preds, info)
+                add(kind, preds, train_preds, info)
     if "ensemble" in wanted:
-        add("ensemble", [(a + b) / 2 for a, b in zip(nets["lstm"], nets["gru"], strict=True)])
+        (lv, lt), (gv, gt) = nets["lstm"], nets["gru"]
+        add(
+            "ensemble",
+            [(a + b) / 2 for a, b in zip(lv, gv, strict=True)],
+            [(a + b) / 2 for a, b in zip(lt, gt, strict=True)],
+        )
 
     alerts = []
     for key, res in results.items():
@@ -199,12 +240,12 @@ def run_benchmark(
                 f"{LABELS[key]} : {direction:.1%} de bonnes directions "
                 f"(> {settings.direction_alert:.0%}), fuite de données probable"
             )
-    return Benchmark(results, y_val, val.windows.dates, histories, alerts)
+    return Benchmark(results, y_val, y_train, val.windows.dates, histories, alerts)
 
 
 def _lightgbm(
     data: ForecastData, settings: Settings, tracker: Tracker, log: Callable[[str], None]
-) -> tuple[list[np.ndarray], dict[str, Any]]:
+) -> tuple[list[np.ndarray], list[np.ndarray], dict[str, Any]]:
     train, val = data["train"], data["val"]
     seed0 = settings.seeds[0]
 
@@ -226,13 +267,14 @@ def _lightgbm(
     study = _optuna_study(seed0)
     study.optimize(objective, n_trials=settings.lgbm_trials)
     log(f"  LightGBM : {settings.lgbm_trials} essais Optuna en {time.perf_counter() - start:.0f} s")
-    preds = []
+    preds, train_preds = [], []
     for seed in settings.seeds:
         model = baselines.fit_lightgbm(
             study.best_params, train.tabular, train.y, val.tabular, val.y, seed, settings.threads
         )
         preds.append(model.predict(val.tabular).astype("float64"))
-    return preds, {**study.best_params}
+        train_preds.append(model.predict(train.tabular).astype("float64"))
+    return preds, train_preds, {**study.best_params}
 
 
 def _network(
@@ -242,7 +284,7 @@ def _network(
     tracker: Tracker,
     models_dir: Path,
     log: Callable[[str], None],
-) -> tuple[list[np.ndarray], dict[str, Any], list[tuple[float, float]]]:
+) -> tuple[list[np.ndarray], list[np.ndarray], dict[str, Any], list[tuple[float, float]]]:
     import optuna
 
     train, val = data["train"], data["val"]
@@ -281,7 +323,7 @@ def _network(
 
     net, cfg = from_params(study.best_params, n_features, base)
     models: dict[int, RecurrentRegressor] = {}
-    preds, epochs = [], []
+    preds, train_preds, epochs = [], [], []
     history: list[tuple[float, float]] = []
     for seed in settings.seeds:
         result = fit(kind, net, cfg, train.x, y_train, val.x, y_val, seed)
@@ -290,6 +332,7 @@ def _network(
         if seed == seed0:
             history = result.history
         preds.append(predict(result.model, val.x).astype("float64") * y_scale)
+        train_preds.append(predict(result.model, train.x).astype("float64") * y_scale)
         tracker.log(
             f"{kind}-final-seed{seed}",
             {**study.best_params, "seed": seed, "best_epoch": result.best_epoch},
@@ -322,7 +365,7 @@ def _network(
             "best_epochs": epochs,
         },
     )
-    return preds, info, history
+    return preds, train_preds, info, history
 
 
 def write_results(bench: Benchmark, out_dir: Path, meta: dict[str, Any]) -> pd.DataFrame:
