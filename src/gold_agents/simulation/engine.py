@@ -55,7 +55,7 @@ def _day(ts: Any) -> date:
     return pd.Timestamp(ts).date()
 
 
-def _execute(
+def execute_order(
     decision: Decision,
     decided_on: date,
     row: pd.Series,
@@ -63,6 +63,10 @@ def _execute(
     costs: CostModel,
     max_position: float,
 ) -> Trade | None:
+    """Exécute `decision` à l'ouverture de `row` ; `None` si rien n'est à faire.
+
+    BUY investit `max_position` du cash quand on n'a pas d'or ; SELL vend tout.
+    """
     market_open = float(row["open"])
     if decision.action is Action.BUY and portfolio.qty == 0:
         price = costs.buy_price(market_open)
@@ -124,7 +128,7 @@ def run_backtest(
         today = _day(row["date"])
         trade = None
         if pending is not None:
-            trade = _execute(*pending, row, portfolio, costs, max_position)
+            trade = execute_order(*pending, row, portfolio, costs, max_position)
             if trade is not None:
                 trades.append(trade)
         close = float(row["close"])
@@ -148,7 +152,7 @@ def run_backtest(
         if ledger is not None:
             events: list[dict[str, Any]] = []
             if trade is not None:
-                events.append({"type": "TRADE", **_jsonable(asdict(trade))})
+                events.append({"type": "TRADE", **jsonable(asdict(trade))})
             events.append(
                 {
                     "type": "DECISION",
@@ -166,5 +170,5 @@ def run_backtest(
     return BacktestResult(strategy.name, initial_capital, pd.DataFrame(rows), trades)
 
 
-def _jsonable(data: dict[str, Any]) -> dict[str, Any]:
+def jsonable(data: dict[str, Any]) -> dict[str, Any]:
     return {k: v.isoformat() if isinstance(v, date) else v for k, v in data.items()}

@@ -53,6 +53,8 @@ class FeaturesConfig(_Strict):
 class StrategyConfig(_Strict):
     theta_buy: float = Field(ge=0)
     theta_sell: float = Field(ge=0)
+    # Filtre de confiance (MC Dropout) : acheter seulement si r̂ / σ̂ dépasse ce seuil.
+    min_confidence: float = Field(default=0.5, ge=0)
 
 
 class RiskConfig(_Strict):
