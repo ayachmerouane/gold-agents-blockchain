@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate verify dashboard all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -53,6 +53,12 @@ backtest:         ## Buy & Hold + SMA 20/50 sur le test : résultats, registres,
 
 simulate:         ## Agents contre Buy & Hold sur la validation : résultats, registres, schéma
 	uv run gold-agents simulate
+
+tune:             ## Réglage des agents en walk-forward (grille, frais, hasard, oracle, schéma)
+	uv run gold-agents tune
+
+freeze:           ## Scelle les réglages de la config dans un bloc genèse (après tune)
+	uv run gold-agents freeze
 
 evaluate:
 	uv run gold-agents evaluate

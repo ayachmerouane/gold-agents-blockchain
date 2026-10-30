@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -50,11 +51,17 @@ class FeaturesConfig(_Strict):
     return_lags: list[int] = Field(default=[1, 5, 10, 20])
 
 
+ForecastModel = Literal["lstm", "gru", "ensemble", "lightgbm"]
+
+
 class StrategyConfig(_Strict):
     theta_buy: float = Field(ge=0)
     theta_sell: float = Field(ge=0)
     # Filtre de confiance (MC Dropout) : acheter seulement si r̂ / σ̂ dépasse ce seuil.
-    min_confidence: float = Field(default=0.5, ge=0)
+    # None : pas de filtre.
+    min_confidence: float | None = Field(default=0.5, ge=0)
+    # Modèle de l'agent de prévision retenu (phase 6).
+    model: ForecastModel = "ensemble"
 
 
 class RiskConfig(_Strict):
@@ -62,6 +69,8 @@ class RiskConfig(_Strict):
     stop_loss: float = Field(gt=0, lt=1)
     max_drawdown: float = Field(gt=0, lt=1)
     allow_short: bool = False
+    # Reprise après le coupe-circuit : jours en cash avant de réautoriser les achats.
+    cooldown_days: int | None = Field(default=None, gt=0)
 
 
 class SimulationConfig(_Strict):
@@ -86,6 +95,41 @@ class ModelsConfig(_Strict):
     threads: int = Field(default=0, ge=0)  # threads PyTorch (0 = choix de PyTorch)
 
 
+class TuningGrid(_Strict):
+    """Grille grossière des réglages (R4 : peu de valeurs par paramètre)."""
+
+    theta_buy: list[float] = Field(min_length=1)
+    theta_sell: list[float] = Field(min_length=1)
+    min_confidence: list[float | None] = Field(min_length=1)  # None : sans filtre
+    stop_loss: list[float] = Field(min_length=1)
+    max_drawdown: list[float] = Field(min_length=1)
+    models: list[ForecastModel] = Field(min_length=1)
+
+
+class TuningConfig(_Strict):
+    """Phase 6 : réglage des agents en walk-forward, avant le test (§4.3, §6.3)."""
+
+    # Périodes jugées, successives ; chacune est prédite par des modèles entraînés sur
+    # tout ce qui la précède (fenêtre croissante depuis le début des données).
+    folds: list[tuple[date, date]] = Field(min_length=2)
+    early_stop_days: int = Field(default=250, gt=0)  # fin du passé : arrêt anticipé
+    seeds: list[int] = Field(default=[0, 1, 2], min_length=1)
+    grid: TuningGrid
+    costs_factors: list[float] = Field(default=[0.0, 1.0, 2.0, 5.0], min_length=1)
+    random_runs: int = Field(default=200, gt=0)  # stratégies aléatoires par période
+
+    @model_validator(mode="after")
+    def _ordered(self) -> TuningConfig:
+        for (a, b), (c, _) in zip(self.folds, self.folds[1:], strict=False):
+            if not (a <= b < c):
+                raise ValueError(
+                    "les périodes du walk-forward doivent se suivre sans chevauchement"
+                )
+        if self.folds[-1][0] > self.folds[-1][1]:
+            raise ValueError("période du walk-forward vide")
+        return self
+
+
 class Config(_Strict):
     seed: int
     data: DataConfig
@@ -95,6 +139,13 @@ class Config(_Strict):
     risk: RiskConfig
     simulation: SimulationConfig
     models: ModelsConfig = ModelsConfig()
+    tuning: TuningConfig | None = None
+
+    @model_validator(mode="after")
+    def _tuning_before_test(self) -> Config:
+        if self.tuning is not None and self.tuning.folds[-1][1] >= self.splits.test_start:
+            raise ValueError("le walk-forward ne doit jamais toucher le test")
+        return self
 
 
 def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:

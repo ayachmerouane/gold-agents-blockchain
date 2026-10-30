@@ -27,16 +27,19 @@ features:
   return_lags: [1, 5, 10, 20]   # rendements des k derniers jours
 
 strategy:
-  # Phase 5 : signe de la prévision (seuils nuls). À régler sur la validation en phase 6.
-  theta_buy: 0.0
-  theta_sell: 0.0
-  min_confidence: 0.5   # k du filtre MC Dropout : acheter seulement si r̂/σ̂ > k (P(hausse) > 69 %)
+  # Phase 6 : réglage FIGÉ le 2026-10-30 (gold-agents tune, walk-forward 2011-2021),
+  # scellé par `gold-agents freeze`. Ne plus modifier avant le test (phase 8).
+  theta_buy: 0.001      # 0,10 % : acheter seulement si r̂ > 0,10 %
+  theta_sell: 0.0       # vendre dès que r̂ < 0
+  min_confidence: 1.0   # k du filtre MC Dropout : acheter si r̂/σ̂ > 1 (P(hausse) > 84 %)
+  model: ensemble       # agent de prévision : ensemble LSTM + GRU
 
 risk:
   max_position: 1.0     # fraction du capital (1.0 = 100 %)
-  stop_loss: 0.05       # -5 % sur la position
-  max_drawdown: 0.20    # -20 % -> passage en cash
+  stop_loss: 0.08       # -8 % sur la position (réglé en phase 6)
+  max_drawdown: 0.25    # -25 % -> passage en cash (réglé en phase 6)
   allow_short: false
+  cooldown_days: 20     # reprise après 20 jours en cash (null : en cash jusqu'à la fin)
 
 simulation:
   initial_capital: 10000.0
@@ -54,3 +57,25 @@ models:
   direction_alert: 0.60 # précision directionnelle au-delà : fuite de données probable
   mlflow_uri: sqlite:///mlruns/mlflow.db
   threads: 0            # threads PyTorch (0 = automatique)
+
+tuning:
+  # Phase 6 : walk-forward à fenêtre croissante. Chaque période est prédite par des
+  # modèles réentraînés sur tout ce qui la précède (depuis 2004), puis jugée.
+  # La dernière période est la validation. Le test (2022+) n'est jamais lu.
+  folds:
+    - ["2011-01-01", "2012-12-31"]
+    - ["2013-01-01", "2014-12-31"]
+    - ["2015-01-01", "2016-12-31"]
+    - ["2017-01-01", "2018-12-31"]
+    - ["2019-01-01", "2021-12-31"]
+  early_stop_days: 250  # la dernière année du passé sert à l'arrêt anticipé
+  seeds: [0, 1, 2]      # graines par réseau et par période
+  grid:                 # grille grossière (R4), pas d'Optuna
+    theta_buy: [0.0, 0.0002, 0.0005, 0.001]     # 0 ; 0,02 % ; 0,05 % ; 0,1 %
+    theta_sell: [0.0, 0.0002, 0.0005, 0.001]
+    min_confidence: [null, 0.25, 0.5, 1.0]      # null : sans filtre MC Dropout
+    stop_loss: [0.03, 0.05, 0.08]
+    max_drawdown: [0.15, 0.20, 0.25]
+    models: [lstm, ensemble, lightgbm]
+  costs_factors: [0, 1, 2, 5]
+  random_runs: 200      # stratégies aléatoires (même nombre de trades) par période

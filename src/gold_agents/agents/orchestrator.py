@@ -48,6 +48,7 @@ class AgentSystem:
                 "stop_loss": self.risk.stop_loss,
                 "max_drawdown": self.risk.max_drawdown,
                 "allow_short": self.risk.allow_short,
+                "cooldown_days": self.risk.cooldown_days,
             },
             "costs": asdict(self.execution.costs),
         }

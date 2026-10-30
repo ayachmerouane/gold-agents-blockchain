@@ -3,7 +3,9 @@
 Règles, dans l'ordre de priorité :
 
 1. **Drawdown max** : si la valeur du portefeuille tombe à `-max_drawdown` sous son plus
-   haut, on vend tout et on reste en cash jusqu'à la fin de la période (coupe-circuit).
+   haut, on vend tout et on passe en cash (coupe-circuit). Sans `cooldown_days`, on y
+   reste jusqu'à la fin de la période ; avec, on reprend après `cooldown_days` jours en
+   cash, et le plus haut repart de la valeur du jour de la reprise.
 2. **Stop-loss** : si le cours tombe à `-stop_loss` sous le prix de revient de la
    position, on vend, quel que soit l'avis de la stratégie.
 3. **Signal** : un BUY est accepté s'il reste du cash (taille `max_position` du cash),
@@ -24,8 +26,10 @@ class RiskAgent:
     stop_loss: float = 0.05
     max_drawdown: float = 0.20
     allow_short: bool = False
+    cooldown_days: int | None = None  # jours en cash avant la reprise ; None : jamais
     peak_value: float = field(default=0.0, init=False)
     halted: bool = field(default=False, init=False)
+    days_in_cash: int = field(default=0, init=False)  # depuis le coupe-circuit
 
     name = "risque"
 
@@ -35,6 +39,10 @@ class RiskAgent:
 
     def act(self, signal: Signal, state: MarketState) -> Order:
         day = signal.date
+        if self.halted and not state.invested and self.cooldown_days is not None:
+            self.days_in_cash += 1
+            if self.days_in_cash > self.cooldown_days:  # reprise : nouveau plus haut
+                self.halted, self.days_in_cash, self.peak_value = False, 0, state.value
         self.peak_value = max(self.peak_value, state.value)
         drawdown = state.value / self.peak_value - 1 if self.peak_value > 0 else 0.0
 
