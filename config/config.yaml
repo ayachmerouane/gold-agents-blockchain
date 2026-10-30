@@ -27,15 +27,17 @@ features:
   return_lags: [1, 5, 10, 20]   # rendements des k derniers jours
 
 strategy:
-  # Phase 5 : signe de la prévision (seuils nuls). À régler sur la validation en phase 6.
-  theta_buy: 0.0
-  theta_sell: 0.0
-  min_confidence: 0.5   # k du filtre MC Dropout : acheter seulement si r̂/σ̂ > k (P(hausse) > 69 %)
+  # Phase 6 : réglage FIGÉ le 2026-10-30 (gold-agents tune, walk-forward 2011-2021),
+  # scellé par `gold-agents freeze`. Ne plus modifier avant le test (phase 8).
+  theta_buy: 0.001      # 0,10 % : acheter seulement si r̂ > 0,10 %
+  theta_sell: 0.0       # vendre dès que r̂ < 0
+  min_confidence: 1.0   # k du filtre MC Dropout : acheter si r̂/σ̂ > 1 (P(hausse) > 84 %)
+  model: ensemble       # agent de prévision : ensemble LSTM + GRU
 
 risk:
   max_position: 1.0     # fraction du capital (1.0 = 100 %)
-  stop_loss: 0.05       # -5 % sur la position
-  max_drawdown: 0.20    # -20 % -> passage en cash
+  stop_loss: 0.08       # -8 % sur la position (réglé en phase 6)
+  max_drawdown: 0.25    # -25 % -> passage en cash (réglé en phase 6)
   allow_short: false
   cooldown_days: 20     # reprise après 20 jours en cash (null : en cash jusqu'à la fin)
 
