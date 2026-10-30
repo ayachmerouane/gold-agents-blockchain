@@ -135,7 +135,8 @@ def diagnostics(tables: dict[str, ForecastTable], cfg: Config) -> pd.DataFrame:
             z = r / np.where(t.sigma_hat > 0, t.sigma_hat, np.nan)
             row["σ̂ médian (%)"] = f"{np.median(t.sigma_hat) * 100:.3f}"
             row["z médian"] = f"{np.nanmedian(z):+.2f}"
-            row[f"z > {k:g}"] = f"{np.nanmean(z > k):.0%}"
+            if k is not None:
+                row[f"z > {k:g}"] = f"{np.nanmean(z > k):.0%}"
         rows[key] = row
     return pd.DataFrame.from_dict(rows, orient="index").fillna("-")
 
@@ -159,7 +160,9 @@ def build_systems(
             name,
             ForecastAgent(tables[key]),
             StrategyAgent(st.theta_buy, st.theta_sell, k),
-            RiskAgent(rk.max_position, rk.stop_loss, rk.max_drawdown, rk.allow_short),
+            RiskAgent(
+                rk.max_position, rk.stop_loss, rk.max_drawdown, rk.allow_short, rk.cooldown_days
+            ),
             ExecutionAgent(costs),
         )
         for name, key, k in plan
@@ -351,14 +354,15 @@ def agents_figure(
             ax_fc.fill_between(
                 x, r - s, r + s, color="#1baf7a", alpha=0.18, label="r̂ ± σ̂ (MC Dropout)"
             )
-            sure = ens.r_hat > st.min_confidence * ens.sigma_hat
+            k = st.min_confidence or 0.0
+            sure = ens.r_hat > k * ens.sigma_hat
             ax_fc.scatter(
                 days[sure],
                 r[sure],
                 s=8,
                 color="#1baf7a",
                 zorder=3,
-                label=f"r̂ > {st.min_confidence:g} σ̂ : achat autorisé ({sure.mean():.0%} des jours)",
+                label=f"r̂ > {k:g} σ̂ : achat autorisé ({sure.mean():.0%} des jours)",
             )
         ax_fc.plot(days, r, color="#7b5cd6", linewidth=1.1, label="r̂ ensemble LSTM + GRU")
         if "lightgbm" in tables:

@@ -14,7 +14,9 @@ Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et 
 Phase 2 (features et découpage) : `gold-agents prepare` calcule les indicateurs, la cible et le découpage train/val/test, avec des tests anti-fuite du futur. 
 Phase 3 (moteur, Buy & Hold, blockchain v1) : `gold-agents backtest` fait passer Buy & Hold et le croisement SMA 20/50 par le moteur jour par jour (exécution à l'ouverture du lendemain, frais et slippage) sur la période de test, enregistre chaque jour dans un registre de blocs chaînés par SHA-256 (`outputs/ledger/*.jsonl`), montre qu'une falsification est détectée et dessine le schéma `outputs/results/backtest/backtest_test.png`. `gold-agents verify` revérifie les registres.
 Phase 4 (baselines puis LSTM/GRU) : `gold-agents train` compare sur la validation les baselines B0 à B4 aux réseaux LSTM et GRU (Optuna, MLflow, early stopping, 5 graines) et dessine `outputs/results/forecast/forecast_val.png`.
-Phase 5 (agents) : `gold-agents simulate` fait trader les quatre agents (prévision, stratégie, risque, exécution) dans le moteur de la phase 3 avec les modèles figés de la phase 4, sur la validation, contre Buy & Hold et SMA 20/50, avec un registre par stratégie et le schéma `outputs/results/agents_val/agents_val.png`. Les modules des phases suivantes sont encore des squelettes.
+Phase 5 (agents) : `gold-agents simulate` fait trader les quatre agents (prévision, stratégie, risque, exécution) dans le moteur de la phase 3 avec les modèles figés de la phase 4, sur la validation, contre Buy & Hold et SMA 20/50, avec un registre par stratégie et le schéma `outputs/results/agents_val/agents_val.png`.
+
+Phase 6 (réglage) : `gold-agents tune` règle les seuils et le risque des agents sur une grille grossière, en walk-forward sur 2011-2021 (modèles réentraînés sur le passé de chaque période), avec la sensibilité aux frais et les références hasard et oracle ; `gold-agents freeze` scelle le réglage retenu dans un bloc genèse. Les modules des phases suivantes sont encore des squelettes.
 
 ## Installation
 
@@ -146,6 +148,23 @@ Chaque jour t, après la clôture, quatre agents se passent des messages typés 
 - **Sorties** : `outputs/results/agents_val/` (`metrics.json`, courbes, trades, décisions jour par jour et prévisions en CSV, schéma `agents_val.png`) et `outputs/ledger/agents_val/*.jsonl`. `--period test` existe mais le test reste réservé à la phase 8.
 - **Limite** : les seuils ne sont pas encore réglés (phase 6) et la validation a déjà servi à régler les modèles ; ces résultats sont donc optimistes pour les modèles.
 
+## Réglage des agents (phase 6)
+
+```bash
+uv run gold-agents tune --quick   # essai rapide de la chaîne (1 graine, 5 époques)
+uv run gold-agents tune           # le vrai réglage (réentraîne LSTM, GRU, LightGBM 5 fois)
+# recopier le bloc affiché dans config/config.yaml, puis :
+uv run gold-agents freeze         # scelle les réglages dans outputs/ledger/reglages_figes.jsonl
+```
+
+- **Prévisions walk-forward** (`models/walk_forward.py`) : 5 périodes (2011-12, 2013-14, 2015-16, 2017-18, 2019-21 = la validation). Chacune est prédite par LSTM, GRU, l'ensemble et LightGBM **réentraînés sur tout ce qui la précède** (hyperparamètres de la phase 4, pas de nouvel Optuna ; la dernière année du passé sert à l'arrêt anticipé ; scaler réajusté). Les lignes du test sont retirées avant tout calcul. Les prévisions sont gardées en cache (`--retrain` pour refaire).
+- **Grille grossière** (R4, `tuning.grid` dans la config) : modèle (LSTM, ensemble, LightGBM) × θ_buy × θ_sell × k × stop-loss × coupe-circuit, soit 1 296 réglages par période. La reprise après le coupe-circuit (`risk.cooldown_days`, 20 jours en cash) est fixe.
+- **Règle de choix** : perte max pas plus profonde que Buy & Hold dans le plus de périodes possible, puis meilleur score = le plus petit entre le Sharpe moyen du réglage et celui de ses voisins dans la grille (un plateau plutôt qu'un pic).
+- **Walk-forward** : la période k est jugée avec le réglage choisi sur les périodes 1 à k-1. Le réglage figé est celui choisi sur les 5 périodes.
+- **Robustesse** : frais × 0, 1, 2, 5 ; stratégie au hasard avec le même nombre de trades (200 tirages par période) ; oracle qui connaît le lendemain (plafond, pour illustration).
+- **Contrôle** : un simulateur rapide (`simulation/fast.py`) fait tourner la grille ; il est vérifié contre le vrai système d'agents (tests, et à chaque `tune` sur la dernière période).
+- **Sorties** : `outputs/results/tuning/` (`grid.csv`, `grid_summary.csv`, `walk_forward.csv`, `costs.csv`, `references.csv`, `chosen.json`, schéma `tuning.png`). `freeze` refuse si la config ne correspond pas à `chosen.json`.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -164,6 +183,8 @@ Chaque jour t, après la clôture, quatre agents se passent des messages typés 
 | `make train` | Baselines B0-B4, LSTM et GRU : tableau comparatif sur la validation, schéma |
 | `make backtest` | Buy & Hold et SMA 20/50 sur le test : métriques, registres, schéma |
 | `make simulate` | Agents (prévision, stratégie, risque, exécution) contre Buy & Hold sur la validation |
+| `make tune` | Réglage des agents en walk-forward : grille, frais, hasard, oracle, schéma |
+| `make freeze` | Scelle les réglages de la config dans un bloc genèse (après `tune`) |
 | `make evaluate` | Métriques et figures |
 | `make verify` | Vérification des registres de `outputs/ledger/` |
 | `make dashboard` | Tableau de bord Streamlit |
