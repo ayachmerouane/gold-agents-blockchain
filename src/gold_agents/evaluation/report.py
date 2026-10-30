@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from gold_agents.blockchain.chain import Chain, Verification, tamper_demo
+from gold_agents.blockchain.signing import Signer
 from gold_agents.blockchain.storage import read_jsonl, write_jsonl
 from gold_agents.config import Config
 from gold_agents.evaluation.financial_metrics import drawdown, summarize
@@ -68,6 +70,7 @@ def run_reference_backtests(
     out_dir: Path,
     ledger_dir: Path,
     costs_factor: float = 1.0,
+    signer: Signer | None = None,
 ) -> list[Run]:
     start, end = evaluation_period(frame)
     sim = cfg.simulation
@@ -76,7 +79,7 @@ def run_reference_backtests(
     strategies: list[Strategy] = [BuyAndHold(), SmaCrossover(20, 50)]
     runs = []
     for strategy in strategies:
-        ledger = Chain.start(genesis_events(cfg, strategy, data_sha256))
+        ledger = Chain.start(genesis_events(cfg, strategy, data_sha256), signer)
         result = run_backtest(
             frame,
             strategy,
@@ -89,13 +92,14 @@ def run_reference_backtests(
         )
         path = write_jsonl(ledger, ledger_dir / f"{strategy.name}.jsonl")
         # On relit le fichier écrit : c'est lui qu'on vérifie, pas l'objet en mémoire.
-        verification = read_jsonl(path).verify()
+        verification = read_jsonl(path).verify(signer.public_key if signer else None)
         metrics = summarize(result, sim.risk_free_rate)
         metrics["ledger"] = {
             "path": str(path),
             "valid": verification.valid,
             "blocks": verification.n_blocks,
             "head_hash": ledger.head.hash,
+            "signatures": verification.signatures,
         }
         result.equity.to_csv(out_dir / f"{strategy.name}_equity.csv", index=False)
         result.trades_frame().to_csv(out_dir / f"{strategy.name}_trades.csv", index=False)
@@ -145,11 +149,11 @@ def monthly_values(result: BacktestResult) -> pd.Series:
     return values.groupby(index.to_period("M")).last()
 
 
-def tamper_lines(run: Run) -> list[str]:
+def tamper_lines(run: Run, public_key: Ed25519PublicKey | None = None) -> list[str]:
     chain = read_jsonl(run.ledger_path)
     return [
-        f"  {scenario:32s} -> {'NON DÉTECTÉ' if v.valid else 'détecté'} ({v.describe()})"
-        for scenario, v in tamper_demo(chain)
+        f"  {scenario:36s} -> {'NON DÉTECTÉ' if v.valid else 'détecté'} ({v.describe()})"
+        for scenario, v in tamper_demo(chain, public_key)
     ]
 
 

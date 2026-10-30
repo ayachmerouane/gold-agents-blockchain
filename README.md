@@ -16,7 +16,9 @@ Phase 3 (moteur, Buy & Hold, blockchain v1) : `gold-agents backtest` fait passer
 Phase 4 (baselines puis LSTM/GRU) : `gold-agents train` compare sur la validation les baselines B0 à B4 aux réseaux LSTM et GRU (Optuna, MLflow, early stopping, 5 graines) et dessine `outputs/results/forecast/forecast_val.png`.
 Phase 5 (agents) : `gold-agents simulate` fait trader les quatre agents (prévision, stratégie, risque, exécution) dans le moteur de la phase 3 avec les modèles figés de la phase 4, sur la validation, contre Buy & Hold et SMA 20/50, avec un registre par stratégie et le schéma `outputs/results/agents_val/agents_val.png`.
 
-Phase 6 (réglage) : `gold-agents tune` règle les seuils et le risque des agents sur une grille grossière, en walk-forward sur 2011-2021 (modèles réentraînés sur le passé de chaque période), avec la sensibilité aux frais et les références hasard et oracle ; `gold-agents freeze` scelle le réglage retenu dans un bloc genèse. Les modules des phases suivantes sont encore des squelettes.
+Phase 6 (réglage) : `gold-agents tune` règle les seuils et le risque des agents sur une grille grossière, en walk-forward sur 2011-2021 (modèles réentraînés sur le passé de chaque période), avec la sensibilité aux frais et les références hasard et oracle ; `gold-agents freeze` scelle le réglage retenu dans un bloc genèse.
+
+Phase 7 (blockchain v2) : chaque bloc porte la racine de Merkle de ses événements, une petite preuve de travail et une signature Ed25519 (`gold-agents keygen` crée la clé ; la clé privée reste dans `keys/`, jamais versionnée). `scripts/verify_ledger.py` vérifie les registres sans le projet (Python + `cryptography`). Les modules des phases suivantes sont encore des squelettes.
 
 ## Installation
 
@@ -107,7 +109,7 @@ make verify      # revérifie tous les registres de outputs/ledger/
 - **Moteur** (`simulation/`) : chaque jour, l'ordre décidé la veille est exécuté à l'**ouverture** (frais 0,1 % + slippage 0,02 % de `config.yaml`), le portefeuille est valorisé à la clôture, puis la stratégie décide en ne voyant que l'historique jusqu'à ce jour. Pas de levier ni de vente à découvert.
 - **Période** : les jours d'exemple du test (les mêmes que pour les futurs modèles), données Kaggle seulement.
 - **Stratégies** : Buy & Hold (achat au premier jour, référence exigée) et croisement SMA 20/50 (règle technique exigée, montre des achats et des ventes).
-- **Registre v1** (`blockchain/`) : un bloc genèse (config complète + empreinte SHA-256 du fichier de features) puis un bloc par jour (trade, décision, portefeuille). Chaque bloc porte le hash du précédent ; la vérification recalcule tout et donne le premier bloc fautif. La commande falsifie aussi des copies du registre pour montrer que c'est détecté. Merkle, signature Ed25519 et `verify_ledger.py` autonome : phase 7.
+- **Registre v1** (`blockchain/`) : un bloc genèse (config complète + empreinte SHA-256 du fichier de features) puis un bloc par jour (trade, décision, portefeuille). Chaque bloc porte le hash du précédent ; la vérification recalcule tout et donne le premier bloc fautif. La commande falsifie aussi des copies du registre pour montrer que c'est détecté. Depuis la phase 7, les registres sont en v2 (voir plus bas).
 - **Sorties** : `outputs/results/backtest/` (`metrics.json`, courbes et trades en CSV, schéma `backtest_test.png`) et `outputs/ledger/<stratégie>.jsonl`. `--costs 2` double frais et slippage (sensibilité).
 
 ## Modèles de prévision (phase 4)
@@ -165,6 +167,23 @@ uv run gold-agents freeze         # scelle les réglages dans outputs/ledger/reg
 - **Contrôle** : un simulateur rapide (`simulation/fast.py`) fait tourner la grille ; il est vérifié contre le vrai système d'agents (tests, et à chaque `tune` sur la dernière période).
 - **Sorties** : `outputs/results/tuning/` (`grid.csv`, `grid_summary.csv`, `walk_forward.csv`, `costs.csv`, `references.csv`, `chosen.json`, schéma `tuning.png`). `freeze` refuse si la config ne correspond pas à `chosen.json`.
 
+## Registre signé, blockchain v2 (phase 7)
+
+```bash
+uv run gold-agents keygen        # une seule fois : keys/ledger_ed25519.key (privée) + ledger/public_key.pem (publique)
+uv run gold-agents simulate      # les registres écrits ensuite sont signés
+uv run gold-agents verify        # liens, hash, Merkle, preuve de travail, signatures
+uv run scripts/verify_ledger.py outputs/ledger   # script autonome du professeur
+```
+
+- **Bloc v2** (`blockchain/block.py`) : le hash est le SHA-256 de l'en-tête `version, index, sim_date, prev_hash, merkle_root, difficulty, nonce` (JSON canonique). Les événements y sont couverts par la **racine de Merkle** (`merkle.py`, préfixes 0x00/0x01, preuves d'inclusion). Le hash doit commencer par `difficulty` = 3 zéros hexadécimaux (**preuve de travail**, environ 4 000 essais, quelques millisecondes par bloc). La **signature Ed25519** (`signing.py`) porte sur le hash.
+- **Pourquoi la signature** : en v1, un fraudeur pouvait modifier un bloc puis recalculer tous les hash suivants. En v2, il lui faudrait aussi resigner chaque bloc, impossible sans la clé privée. La preuve de travail est pédagogique (elle ralentit, n'empêche pas).
+- **Pas d'heure réelle dans les blocs** : Ed25519 est déterministe, donc rejouer un backtest redonne un registre identique octet pour octet. L'antériorité vient de Git et, en bonus, de l'ancrage du dernier hash sur Sepolia.
+- **Sans clé privée**, les commandes écrivent des registres v2 non signés et le disent. Avec la clé publique, `verify` exige une signature valide sur chaque bloc.
+- **Registres v1** (phases 3 à 6, dont `reglages_figes.jsonl`, bloc genèse `ca1c3fd2…60c9`) : toujours lus et vérifiés, signalés « v1 sans signature ». `--strict` les refuse.
+- **`scripts/verify_ledger.py`** : réécrit toutes les règles sans importer le projet (deux implémentations, même verdict, testé). Options `--public-key`, `--head <hash attendu>`, `--strict`. Un job de la CI le lance sur une machine vierge avec le registre de démonstration `tests/golden/ledger/demo_v2.jsonl`.
+- **Tests de falsification** (`tests/ledger/`) : événement modifié (racine de Merkle), en-tête modifié (hash), bloc re-haché (signature), chaîne réécrite avec une autre clé (signature), preuve de travail absente, bloc supprimé, inséré, inversé, versions mélangées, rejeu identique.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -186,7 +205,9 @@ uv run gold-agents freeze         # scelle les réglages dans outputs/ledger/reg
 | `make tune` | Réglage des agents en walk-forward : grille, frais, hasard, oracle, schéma |
 | `make freeze` | Scelle les réglages de la config dans un bloc genèse (après `tune`) |
 | `make evaluate` | Métriques et figures |
-| `make verify` | Vérification des registres de `outputs/ledger/` |
+| `make keygen` | Paire de clés Ed25519 du registre (une seule fois) |
+| `make verify` | Vérification des registres de `outputs/ledger/` (signatures avec `ledger/public_key.pem`) |
+| `make verify-ledger` | Script autonome `scripts/verify_ledger.py` sur `ledger/` |
 | `make dashboard` | Tableau de bord Streamlit |
 | `make all` | Chaîne complète |
 

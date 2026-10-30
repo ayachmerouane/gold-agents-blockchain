@@ -99,10 +99,14 @@ def test_tune_then_freeze(tmp_path: Path, cfg: Config, clean_series: pd.DataFram
 
     raw["strategy"]["theta_buy"] = settings["theta_buy"]
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    res = runner.invoke(app, freeze)
+    key, public = tmp_path / "k.key", tmp_path / "public_key.pem"
+    runner.invoke(app, ["keygen", "--key", str(key), "--public-key", str(public)])
+    res = runner.invoke(app, [*freeze, "--key", str(key)])
     assert res.exit_code == 0, res.output
-    res = runner.invoke(app, ["verify", str(ledgers / "reglages_figes.jsonl")])
-    assert res.exit_code == 0 and "chaîne valide (1 blocs)" in res.output
+    res = runner.invoke(
+        app, ["verify", str(ledgers / "reglages_figes.jsonl"), "--public-key", str(public)]
+    )
+    assert res.exit_code == 0 and "(1 blocs, v2, signatures vérifiées)" in res.output
     block = json.loads(
         (ledgers / "reglages_figes.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )

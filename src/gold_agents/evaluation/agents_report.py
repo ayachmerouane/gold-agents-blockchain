@@ -27,6 +27,7 @@ from gold_agents.agents.orchestrator import AgentSystem, run_agents
 from gold_agents.agents.risk import RiskAgent
 from gold_agents.agents.strategy import StrategyAgent
 from gold_agents.blockchain.chain import Chain
+from gold_agents.blockchain.signing import Signer
 from gold_agents.blockchain.storage import read_jsonl, write_jsonl
 from gold_agents.config import Config
 from gold_agents.evaluation import report
@@ -188,13 +189,15 @@ def _finish(
     result: BacktestResult, ledger: Chain, ledger_dir: Path, out_dir: Path, cfg: Config
 ) -> Run:
     path = write_jsonl(ledger, ledger_dir / f"{result.strategy}.jsonl")
-    verification = read_jsonl(path).verify()  # on vérifie le fichier écrit
+    public_key = ledger.signer.public_key if ledger.signer else None
+    verification = read_jsonl(path).verify(public_key)  # on vérifie le fichier écrit
     metrics = summarize(result, cfg.simulation.risk_free_rate)
     metrics["ledger"] = {
         "path": str(path),
         "valid": verification.valid,
         "blocks": verification.n_blocks,
         "head_hash": ledger.head.hash,
+        "signatures": verification.signatures,
     }
     result.equity.to_csv(out_dir / f"{result.strategy}_equity.csv", index=False)
     result.trades_frame().to_csv(out_dir / f"{result.strategy}_trades.csv", index=False)
@@ -210,6 +213,7 @@ def run_agent_backtests(
     out_dir: Path,
     ledger_dir: Path,
     costs_factor: float = 1.0,
+    signer: Signer | None = None,
 ) -> list[AgentResult]:
     start, end = simulation_period(frame, split)
     sim = cfg.simulation
@@ -219,7 +223,7 @@ def run_agent_backtests(
 
     references: list[Strategy] = [BuyAndHold(), SmaCrossover(20, 50)]
     for strategy in references:
-        ledger = Chain.start(_genesis(cfg, data_sha256, strategy.name, {"period": split}))
+        ledger = Chain.start(_genesis(cfg, data_sha256, strategy.name, {"period": split}), signer)
         result = run_backtest(
             frame, strategy, costs, sim.initial_capital, start, end, cfg.risk.max_position, ledger
         )
@@ -227,7 +231,7 @@ def run_agent_backtests(
 
     for system in build_systems(cfg, tables, costs):
         extra = {"period": split, "agents": system.describe()}
-        ledger = Chain.start(_genesis(cfg, data_sha256, system.name, extra))
+        ledger = Chain.start(_genesis(cfg, data_sha256, system.name, extra), signer)
         agent_run = run_agents(frame, system, sim.initial_capital, start, end, ledger)
         run = _finish(agent_run.result, ledger, ledger_dir, out_dir, cfg)
         agent_run.decisions.to_csv(out_dir / f"{system.name}_decisions.csv", index=False)

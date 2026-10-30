@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger dashboard all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -63,8 +63,14 @@ freeze:           ## Scelle les réglages de la config dans un bloc genèse (apr
 evaluate:
 	uv run gold-agents evaluate
 
-verify:           ## Vérifie les registres de outputs/ledger/
+keygen:           ## Paire de clés Ed25519 du registre (clé privée dans keys/, jamais versionnée)
+	uv run gold-agents keygen
+
+verify:           ## Vérifie les registres de outputs/ledger/ (signatures avec ledger/public_key.pem)
 	uv run gold-agents verify
+
+verify-ledger:    ## Script autonome du professeur sur ledger/ (Python + cryptography seulement)
+	uv run scripts/verify_ledger.py
 
 dashboard:
 	uv run streamlit run dashboard/app.py
