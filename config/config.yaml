@@ -27,8 +27,10 @@ features:
   return_lags: [1, 5, 10, 20]   # rendements des k derniers jours
 
 strategy:
-  theta_buy: 0.001
-  theta_sell: 0.001
+  # Phase 5 : signe de la prévision (seuils nuls). À régler sur la validation en phase 6.
+  theta_buy: 0.0
+  theta_sell: 0.0
+  min_confidence: 0.5   # k du filtre MC Dropout : acheter seulement si r̂/σ̂ > k (P(hausse) > 69 %)
 
 risk:
   max_position: 1.0     # fraction du capital (1.0 = 100 %)

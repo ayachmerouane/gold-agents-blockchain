@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest evaluate verify dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate evaluate verify dashboard all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -51,6 +51,9 @@ train:            ## Baselines B0-B4 puis LSTM/GRU sur la validation (extra ml r
 backtest:         ## Buy & Hold + SMA 20/50 sur le test : résultats, registres, schéma
 	uv run gold-agents backtest
 
+simulate:         ## Agents contre Buy & Hold sur la validation : résultats, registres, schéma
+	uv run gold-agents simulate
+
 evaluate:
 	uv run gold-agents evaluate
 
@@ -60,4 +63,4 @@ verify:           ## Vérifie les registres de outputs/ledger/
 dashboard:
 	uv run streamlit run dashboard/app.py
 
-all: data train backtest evaluate verify
+all: data train backtest simulate evaluate verify

@@ -329,6 +329,87 @@ def backtest(
         raise typer.Exit(code=1)
 
 
+AGENTS_OUT_OPTION = typer.Option(
+    None, "--out", help="Dossier des résultats (défaut : outputs/results/agents_<période>)."
+)
+FORECAST_DIR_OPTION = typer.Option(
+    Path("outputs/results/forecast"), "--forecast-dir", help="Résultats de `train`."
+)
+
+
+class Period(StrEnum):
+    val = "val"
+    test = "test"
+
+
+PERIOD_OPTION = typer.Option(Period.val, help="Période simulée (le test : phase 8).")
+
+
+@app.command()
+def simulate(
+    config: Path = CONFIG_OPTION,
+    period: Period = PERIOD_OPTION,
+    out_dir: Path | None = AGENTS_OUT_OPTION,
+    models_dir: Path = MODELS_DIR_OPTION,
+    forecast_dir: Path = FORECAST_DIR_OPTION,
+    ledger_dir: Path = LEDGER_DIR_OPTION,
+    costs_factor: float = typer.Option(1.0, "--costs", help="Multiplie frais et slippage."),
+) -> None:
+    """Agents (prévision, stratégie, risque, exécution) contre Buy & Hold : registre et schéma."""
+    import time
+
+    from gold_agents.data.prepare import FEATURES_FILE, load_prepared
+    from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation import agents_report as ar
+    from gold_agents.models.dataset import build_forecast_data
+
+    cfg = load_config(config)
+    path = cfg.data.processed_dir / FEATURES_FILE
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `uv run gold-agents prepare`.", err=True)
+        raise typer.Exit(code=1)
+    missing = [p for p in (models_dir / "lstm", models_dir / "gru") if not p.exists()]
+    if missing or not (forecast_dir / ar.FORECAST_FILE).exists():
+        typer.echo("Modèles de la phase 4 absents : lancer d'abord `uv run gold-agents train`.")
+        raise typer.Exit(code=1)
+    if period is Period.test:
+        typer.echo("ATTENTION : le test est réservé à l'évaluation finale (phase 8).")
+    split = period.value
+    out = out_dir or Path(f"outputs/results/agents_{split}")
+    ledgers = ledger_dir / f"agents_{split}"
+
+    start_time = time.perf_counter()
+    frame, scaler = load_prepared(cfg.data.processed_dir)
+    data = build_forecast_data(frame, scaler, cfg.features.window)
+    tables = ar.forecast_tables(cfg, data, split, models_dir, forecast_dir)
+    start, end = ar.simulation_period(frame, split)
+    st = cfg.strategy
+    typer.echo(
+        f"Période {split} : du {start} au {end}, frais x {costs_factor:g}. Stratégie : "
+        f"θ_buy {st.theta_buy:g}, θ_sell {st.theta_sell:g}, confiance k = {st.min_confidence:g}."
+    )
+    typer.echo("\nPrévisions des modèles (agent de prévision) :")
+    typer.echo(ar.diagnostics(tables, cfg).to_string())
+
+    results = ar.run_agent_backtests(
+        cfg, frame, tables, split, sha256_file(path), out, ledgers, costs_factor
+    )
+    typer.echo("\nRésultats :")
+    typer.echo(ar.comparison_table(results).T.to_string())
+    typer.echo("\nTrades par règle de l'agent de risque :")
+    for r in results:
+        if r.decisions is not None:
+            rules = ", ".join(f"{k} {v}" for k, v in r.run.metrics["rules"].items())
+            typer.echo(f"  {ar.AGENT_LABELS[r.run.result.strategy]:30s} {rules}")
+    figure = ar.agents_figure(results, tables, cfg, split, out / f"agents_{split}.png")
+    typer.echo(
+        f"\nSchéma : {figure}\nRésultats : {out}  Registres : {ledgers}  "
+        f"({time.perf_counter() - start_time:.0f} s)"
+    )
+    if not all(r.run.verification.valid for r in results):
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def evaluate(config: Path = CONFIG_OPTION) -> None:
     """Calcule les métriques et génère les figures."""

@@ -13,7 +13,8 @@ Phase 0 (cadrage et socle) : structure du dépôt, configuration validée, CI, t
 Phase 1 (données et EDA) : `gold-agents eda` produit le rapport d'anomalies et les graphiques.
 Phase 2 (features et découpage) : `gold-agents prepare` calcule les indicateurs, la cible et le découpage train/val/test, avec des tests anti-fuite du futur. 
 Phase 3 (moteur, Buy & Hold, blockchain v1) : `gold-agents backtest` fait passer Buy & Hold et le croisement SMA 20/50 par le moteur jour par jour (exécution à l'ouverture du lendemain, frais et slippage) sur la période de test, enregistre chaque jour dans un registre de blocs chaînés par SHA-256 (`outputs/ledger/*.jsonl`), montre qu'une falsification est détectée et dessine le schéma `outputs/results/backtest/backtest_test.png`. `gold-agents verify` revérifie les registres.
-Phase 4 (baselines puis LSTM/GRU) : `gold-agents train` compare sur la validation les baselines B0 à B4 aux réseaux LSTM et GRU (Optuna, MLflow, early stopping, 5 graines) et dessine `outputs/results/forecast/forecast_val.png`. Les modules des phases suivantes sont encore des squelettes.
+Phase 4 (baselines puis LSTM/GRU) : `gold-agents train` compare sur la validation les baselines B0 à B4 aux réseaux LSTM et GRU (Optuna, MLflow, early stopping, 5 graines) et dessine `outputs/results/forecast/forecast_val.png`.
+Phase 5 (agents) : `gold-agents simulate` fait trader les quatre agents (prévision, stratégie, risque, exécution) dans le moteur de la phase 3 avec les modèles figés de la phase 4, sur la validation, contre Buy & Hold et SMA 20/50, avec un registre par stratégie et le schéma `outputs/results/agents_val/agents_val.png`. Les modules des phases suivantes sont encore des squelettes.
 
 ## Installation
 
@@ -125,6 +126,26 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db   # essais Optun
 - **Le test n'est pas utilisé** : il est réservé à l'évaluation finale (phase 8).
 - **Sorties** : `outputs/results/forecast/` (`summary_val.csv`, métriques par graine, prévisions de validation, schéma) et `outputs/models/<lstm|gru>/` (poids de chaque graine + `model.json`). Options : `--models lstm,gru`, `--trials 10`, `--no-mlflow`.
 
+## Agents de trading (phase 5)
+
+```bash
+uv run gold-agents train      # une fois : poids des réseaux dans outputs/models/
+uv run gold-agents simulate   # agents contre Buy & Hold sur la validation (quelques minutes)
+uv run gold-agents simulate --costs 2   # frais et slippage doublés (sensibilité)
+```
+
+Chaque jour t, après la clôture, quatre agents se passent des messages typés (`agents/messages.py`) :
+
+1. **Prévision** : `r̂(t+1)` du modèle figé, lu sur la fenêtre des 30 jours qui finissent à t (jamais au-delà) ; pour l'ensemble LSTM + GRU, `σ̂` par MC Dropout (50 passages par graine).
+2. **Stratégie** : BUY si `r̂ > θ_buy`, SELL si `r̂ < -θ_sell`, sinon HOLD. Variante « confiance » : n'acheter que si `r̂ / σ̂ > k` (`strategy.min_confidence`, 0,5 = probabilité de hausse d'au moins 69 %) ; la vente n'exige aucune confiance.
+3. **Risque** : coupe-circuit au drawdown max (-20 % : tout vendre et rester en cash), stop-loss (-5 % sous le prix de revient), refus des ordres impossibles (pas de cash, rien à vendre, pas de vente à découvert).
+4. **Exécution** : l'ordre passe à l'ouverture de t+1 par le moteur de la phase 3, avec les mêmes frais et le même slippage que Buy & Hold.
+
+- **Systèmes comparés** : Agents + LSTM, + GRU, + ensemble LSTM/GRU, + ensemble avec le filtre de confiance, + LightGBM (le concurrent sans réseau, réentraîné avec ses réglages Optuna de la phase 4), contre Buy & Hold et SMA 20/50, sur la même période.
+- **Traçabilité** : chaque jour, un bloc contient la prévision, le signal, l'ordre (avec la règle qui a décidé) et le trade ; les paramètres des agents sont dans le bloc genèse.
+- **Sorties** : `outputs/results/agents_val/` (`metrics.json`, courbes, trades, décisions jour par jour et prévisions en CSV, schéma `agents_val.png`) et `outputs/ledger/agents_val/*.jsonl`. `--period test` existe mais le test reste réservé à la phase 8.
+- **Limite** : les seuils ne sont pas encore réglés (phase 6) et la validation a déjà servi à régler les modèles ; ces résultats sont donc optimistes pour les modèles.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -142,6 +163,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db   # essais Optun
 | `make data` | Nettoyage puis préparation (`clean` + `prepare`) |
 | `make train` | Baselines B0-B4, LSTM et GRU : tableau comparatif sur la validation, schéma |
 | `make backtest` | Buy & Hold et SMA 20/50 sur le test : métriques, registres, schéma |
+| `make simulate` | Agents (prévision, stratégie, risque, exécution) contre Buy & Hold sur la validation |
 | `make evaluate` | Métriques et figures |
 | `make verify` | Vérification des registres de `outputs/ledger/` |
 | `make dashboard` | Tableau de bord Streamlit |
