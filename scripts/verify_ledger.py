@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -156,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
         "--strict", action="store_true", help="refuser les registres v1 ou non signés"
     )
     args = parser.parse_args(argv)
+    # Sous Windows, une sortie redirigée prend l'encodage cp1252 : on force l'UTF-8.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
 
     key_path = args.public_key or (DEFAULT_PUBLIC_KEY if DEFAULT_PUBLIC_KEY.exists() else None)
     public_key = load_public_key(key_path) if key_path else None

@@ -85,6 +85,7 @@ def test_script_does_not_import_the_project() -> None:
         "__future__",
         "argparse",
         "hashlib",
+        "io",
         "json",
         "sys",
         "pathlib",
@@ -95,7 +96,8 @@ def test_script_does_not_import_the_project() -> None:
 
 def test_golden_demo_is_reproducible(tmp_path: Path) -> None:
     assert write_jsonl(demo_chain(), tmp_path / "d.jsonl").read_bytes() == DEMO.read_bytes()
-    assert public_pem(DEMO_SIGNER.public_key) == DEMO_KEY.read_bytes()
+    # Comparaison sans les fins de ligne : Git peut les convertir en CRLF sous Windows.
+    assert public_pem(DEMO_SIGNER.public_key).splitlines() == DEMO_KEY.read_bytes().splitlines()
 
 
 def test_script_accepts_demo_and_frozen_settings() -> None:
