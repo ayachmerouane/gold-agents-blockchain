@@ -5,12 +5,21 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from common import BUY_COLOR, SELL_COLOR, date_range, plot_layout, require_period, strategy_picker
+from common import (
+    BUY_COLOR,
+    SELL_COLOR,
+    date_range,
+    header,
+    plot_layout,
+    require_period,
+    section,
+    strategy_picker,
+)
 
 from gold_agents.dashboard import data
 
 period = require_period()
-st.title("Décisions")
+header("Décisions", "Chaque ordre, son motif et l'agent qui l'a décidé")
 
 left, right = st.columns([1, 2])
 with left:
@@ -23,6 +32,14 @@ with right:
 frame = period.frames[strategy]
 trades = period.trades[strategy]
 close = period.close.loc[lo:hi]
+
+in_range = frame[(frame["date"] >= lo) & (frame["date"] <= hi)]
+c = st.columns(4)
+c[0].metric("Achats", int((in_range["action"] == "BUY").sum()), border=True)
+c[1].metric("Ventes", int((in_range["action"] == "SELL").sum()), border=True)
+c[2].metric("Jours en attente", int((in_range["action"] == "HOLD").sum()), border=True)
+refused = int((in_range["approved"] == False).sum()) if "approved" in in_range else 0  # noqa: E712
+c[3].metric("Ordres refusés par le risque", refused, border=True)
 
 fig = go.Figure()
 fig.add_trace(
@@ -58,7 +75,7 @@ if len(trades):
                 "quantité %{customdata[1]:.3f} oz, frais %{customdata[2]:.2f} $<extra></extra>",
             )
         )
-fig.update_layout(title=f"{data.label(strategy)} : ordres exécutés (à l'ouverture du lendemain)")
+fig.update_layout(title="Ordres exécutés à l'ouverture du lendemain")
 st.plotly_chart(plot_layout(fig, height=440, y_title="USD par once"), width="stretch")
 if not len(trades):
     st.info("Aucun ordre exécuté sur la période pour cette stratégie.")
@@ -66,15 +83,11 @@ if not len(trades):
 # --- Qui a décidé quoi --------------------------------------------------------------------
 counts = data.rule_counts(frame)
 if len(counts):
-    st.subheader("Qui a décidé : règle appliquée par l'agent risque")
-    rules = {
-        "signal": "signal de l'agent stratégie accepté",
-        "stop_loss": "stop-loss (agent risque)",
-        "max_drawdown": "perte max atteinte (agent risque)",
-        "rejet": "ordre refusé (agent risque)",
-    }
+    section("Qui a décidé : règle appliquée par l'agent risque")
     pivot = counts.pivot_table(index="rule", columns="action", values="jours", fill_value=0)
-    pivot.index = [rules.get(str(r), str(r)) for r in pivot.index]
+    pivot.index = [data.rule_label(str(r)) for r in pivot.index]
+    pivot.columns = [data.action_label(str(a)) for a in pivot.columns]
+    pivot.index.name = "Règle"
     st.dataframe(pivot, width="stretch")
     if "signal" in frame:
         changed = frame["signal"].notna() & (frame["signal"] != frame["action"])
@@ -84,15 +97,19 @@ if len(counts):
         )
 
 # --- Tableau filtrable --------------------------------------------------------------------
-st.subheader("Journal des décisions")
+section("Journal des décisions")
 view = frame[(frame["date"] >= lo) & (frame["date"] <= hi)].copy()
 c = st.columns([1, 1, 2])
 actions = sorted(view["action"].dropna().unique())
 default = [a for a in actions if a != "HOLD"] or actions
-pick_actions = c[0].multiselect("Action", actions, default)
+pick_actions = c[0].multiselect("Action", actions, default, format_func=data.action_label)
 rule_options = sorted(view["rule"].dropna().unique()) if "rule" in view else []
-pick_rules = c[1].multiselect("Règle", rule_options, rule_options) if rule_options else []
-text = c[2].text_input("Chercher dans le motif", placeholder="ex. stop, θ_buy, incertain")
+pick_rules = (
+    c[1].multiselect("Règle", rule_options, rule_options, format_func=data.rule_label)
+    if rule_options
+    else []
+)
+text = c[2].text_input("Rechercher dans le motif", placeholder="ex. stop, seuil, incertain")
 
 mask = view["action"].isin(pick_actions)
 if rule_options:
@@ -100,17 +117,22 @@ if rule_options:
 if text:
     mask &= view["reason"].fillna("").str.contains(text, case=False, regex=False)
 view = view[mask]
+for col in ("action", "signal"):
+    if col in view:
+        view[col] = view[col].map(data.action_label)
+if "rule" in view:
+    view["rule"] = view["rule"].map(data.rule_label)
 
 columns = {
     "date": "Date",
-    "block": "Bloc",
-    "signal": "Signal (stratégie)",
+    "signal": "Signal de la stratégie",
     "action": "Ordre final",
-    "rule": "Règle",
+    "rule": "Décidé par",
     "reason": "Motif",
-    "r_hat": "r̂",
-    "sigma_hat": "σ̂",
+    "r_hat": "Rendement prévu",
+    "sigma_hat": "Incertitude",
     "value": "Valeur du portefeuille",
+    "block": "Bloc n°",
 }
 table = view[[c for c in columns if c in view]].rename(columns=columns)
 st.dataframe(
@@ -119,15 +141,22 @@ st.dataframe(
     width="stretch",
     column_config={
         "Date": st.column_config.DateColumn(format="DD/MM/YYYY"),
-        "r̂": st.column_config.NumberColumn(format="%.5f"),
-        "σ̂": st.column_config.NumberColumn(format="%.5f"),
-        "Valeur du portefeuille": st.column_config.NumberColumn(format="%.2f $"),
+        "Rendement prévu": st.column_config.NumberColumn(format="percent"),
+        "Incertitude": st.column_config.NumberColumn(format="percent"),
+        "Valeur du portefeuille": st.column_config.NumberColumn(format="dollar"),
+        "Motif": st.column_config.TextColumn(width="large"),
     },
 )
-st.caption(f"{len(table)} jour(s) affiché(s). Le numéro de bloc renvoie à la page Blockchain.")
-st.download_button(
-    "Télécharger ce tableau (CSV)",
+left, right = st.columns([3, 1], vertical_alignment="center")
+left.caption(
+    f"{len(table)} jour(s) affiché(s). Le bloc n° permet de retrouver la décision dans "
+    "le registre blockchain."
+)
+right.download_button(
+    "Exporter en CSV",
     pd.DataFrame(table).to_csv(index=False).encode("utf-8"),
     file_name=f"decisions_{strategy}.csv",
     mime="text/csv",
+    icon=":material/download:",
+    width="stretch",
 )

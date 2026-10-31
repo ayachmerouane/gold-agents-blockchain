@@ -467,10 +467,12 @@ def flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def fmt_pct(x: float | None, digits: int = 1) -> str:
+def fmt_pct(x: float | None, digits: int = 1, signed: bool = True) -> str:
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "–"
-    return f"{x * 100:+.{digits}f} %".replace(".", ",")
+    value = 0.0 if abs(x) < 0.5 * 10 ** -(digits + 2) else x  # pas de « -0,0 % »
+    sign = "+" if signed else ""
+    return f"{value * 100:{sign}.{digits}f} %".replace(".", ",")
 
 
 def fmt_money(x: float | None) -> str:
@@ -483,3 +485,120 @@ def fmt_num(x: float | None, digits: int = 2) -> str:
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "–"
     return f"{x:.{digits}f}".replace(".", ",")
+
+
+# --- Libellés pour l'interface ------------------------------------------------------------
+
+LEDGER_LABELS = {"plan": "Plan du test (scellé avant le run)", "resultats": "Résultats scellés"}
+MODEL_LABELS = {
+    "lstm": "LSTM",
+    "gru": "GRU",
+    "ensemble_lstm_gru": "Ensemble LSTM + GRU",
+    "lightgbm": "LightGBM",
+    "b0_zero": "Référence : rendement nul",
+    "always_up": "Référence : toujours en hausse",
+    "ensemble": "Ensemble LSTM + GRU",
+}
+ACTION_LABELS = {"BUY": "Achat", "SELL": "Vente", "HOLD": "Attente", "END": "Clôture"}
+RULE_LABELS = {
+    "signal": "Signal de l'agent stratégie",
+    "stop_loss": "Stop-loss",
+    "max_drawdown": "Coupe-circuit (perte maximale)",
+    "rejet": "Ordre refusé par l'agent risque",
+}
+EVENT_LABELS = {
+    "GENESIS": "Configuration scellée",
+    "FORECAST": "Prévision",
+    "SIGNAL": "Signal",
+    "ORDER": "Ordre (agent risque)",
+    "DECISION": "Décision",
+    "TRADE": "Exécution",
+    "PORTFOLIO": "Portefeuille",
+    "METRICS": "Métriques",
+    "COSTS_SENSITIVITY": "Sensibilité aux frais",
+    "RANDOM_REFERENCES": "Comparaison au hasard",
+    "FORECAST_METRICS": "Erreurs de prévision",
+    "ALERTS": "Alertes",
+}
+PERIOD_SUFFIX = {"test": "test", "agents_val": "validation", "final_val": "répétition"}
+
+
+def ledger_label(stem: str) -> str:
+    return LEDGER_LABELS.get(stem, label(stem))
+
+
+def ledger_file_label(file: str) -> str:
+    """« outputs/ledger/agents_val/agents_gru.jsonl » -> « Agents (GRU) · validation »."""
+    path = Path(file)
+    name = ledger_label(path.stem)
+    if path.stem == "reglages_figes":
+        return "Réglages figés (phase 6)"
+    period = PERIOD_SUFFIX.get(path.parent.name, path.parent.name)
+    return f"{name} · {period}" if path.parent.name != "ledger" else name
+
+
+def model_label(model_id: str) -> str:
+    return MODEL_LABELS.get(model_id, model_id)
+
+
+def action_label(action: Any) -> Any:
+    return ACTION_LABELS.get(action, action) if isinstance(action, str) else action
+
+
+def rule_label(rule: Any) -> Any:
+    return RULE_LABELS.get(rule, rule) if isinstance(rule, str) else rule
+
+
+def event_summary(event: dict[str, Any]) -> str:
+    """Une phrase lisible pour un événement de bloc."""
+    kind = event.get("type")
+    if kind == "FORECAST":
+        sigma = event.get("sigma_hat")
+        extra = f", incertitude σ̂ {sigma:.4%}" if sigma else ""
+        return f"{model_label(str(event.get('model_id')))} prévoit {event['r_hat']:+.4%}{extra}"
+    if kind in ("SIGNAL", "DECISION"):
+        return f"{action_label(event.get('action'))} : {event.get('reason', '')}"
+    if kind == "ORDER":
+        state = "accepté" if event.get("approved") else "refusé"
+        return (
+            f"{action_label(event.get('action'))} {state} ({rule_label(event.get('rule'))}) : "
+            f"{event.get('reason', '')}"
+        )
+    if kind == "TRADE":
+        return (
+            f"{action_label(event.get('side'))} de {event['qty']:.4f} oz à "
+            f"{event['price']:,.2f} $ le {event.get('exec_date')}, frais {event['fees']:.2f} $"
+        ).replace(",", " ")
+    if kind == "PORTFOLIO":
+        return (
+            f"Valeur {fmt_money(event['value'])}, liquidités {fmt_money(event['cash'])}, "
+            f"{event['qty']:.4f} oz d'or"
+        )
+    if kind == "GENESIS":
+        return "Configuration, empreinte des données et réglages, fixés avant le premier jour"
+    return ", ".join(f"{k} : {v}" for k, v in event.items() if k != "type")[:200]
+
+
+HYPERPARAM_LABELS = {
+    "net.dropout": "Dropout",
+    "net.hidden": "Neurones cachés",
+    "net.layers": "Couches",
+    "net.n_features": "Variables d'entrée",
+    "train.batch_size": "Taille de lot",
+    "train.clip": "Écrêtage du gradient",
+    "train.loss": "Fonction de perte",
+    "train.lr": "Taux d'apprentissage",
+    "train.max_epochs": "Époques max",
+    "train.patience": "Patience (arrêt anticipé)",
+    "train.weight_decay": "Régularisation L2",
+    "colsample_bytree": "Part des variables par arbre",
+    "learning_rate": "Taux d'apprentissage",
+    "min_child_samples": "Exemples min par feuille",
+    "num_leaves": "Feuilles par arbre",
+    "reg_lambda": "Régularisation L2",
+    "subsample": "Part des exemples par arbre",
+}
+
+
+def hyperparam_label(key: str) -> str:
+    return HYPERPARAM_LABELS.get(key, key)

@@ -5,13 +5,21 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from common import DEFAULT_COMPARE, color, date_range, plot_layout, require_period
+from common import (
+    DEFAULT_COMPARE,
+    color,
+    date_range,
+    header,
+    plot_layout,
+    require_period,
+    section,
+)
 
 from gold_agents.dashboard import data
 from gold_agents.evaluation.financial_metrics import drawdown
 
 period = require_period()
-st.title("Portefeuille")
+header("Portefeuille", "Évolution de la valeur, des baisses et de l'exposition à l'or")
 
 options = period.strategies
 default = [s for s in DEFAULT_COMPARE if s in options] or options[:3]
@@ -64,7 +72,7 @@ if "oracle" in picked:
         "objectif atteignable."
     )
 
-st.subheader("Exposition : part du portefeuille investie en or")
+section("Exposition : part du portefeuille investie en or")
 close = period.close
 rows = []
 for name in picked:

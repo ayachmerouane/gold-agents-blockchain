@@ -1,8 +1,8 @@
-"""Outils partagés par les pages : chargement en cache, couleurs, mise en forme.
+"""Outils partagés par les pages : chargement en cache, couleurs, style, mise en forme.
 
 Rien n'est recalculé ici : on lit les registres de `outputs/ledger/<période>/` et, s'ils
 existent, les résultats de `outputs/results/`. Le cache est invalidé quand un fichier
-change (date de modification dans la clé).
+change (date de modification dans la clé). Aucun nom de fichier n'apparaît à l'écran.
 """
 
 from __future__ import annotations
@@ -106,12 +106,44 @@ def require_period() -> Period:
     period = current_period()
     if period is None:
         st.error(
-            "Aucun registre trouvé dans `outputs/ledger/`. Lancez d'abord "
-            "`make evaluate` (test final) ou `make simulate`, ou récupérez le dépôt à jour "
-            "avec `git pull`."
+            "Aucun résultat à afficher pour le moment. Lancez d'abord l'évaluation finale, "
+            "puis rouvrez le tableau de bord."
         )
         st.stop()
     return period
+
+
+GOLD = "#C9A227"
+STYLE = """
+<style>
+.block-container {padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1280px;}
+h1 {font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0 !important;}
+h2, h3 {font-weight: 600; letter-spacing: -0.01em;}
+.ga-subtitle {color: rgba(128,128,128,0.95); font-size: 0.98rem; margin: 0.15rem 0 1.4rem;}
+.ga-section {font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
+             text-transform: uppercase; color: rgba(128,128,128,0.95); margin: 1.6rem 0 0.4rem;}
+[data-testid="stMetricValue"] {font-size: 1.7rem; font-weight: 600;}
+[data-testid="stMetricLabel"] p {font-size: 0.82rem; color: rgba(128,128,128,0.95);}
+code {white-space: nowrap;}
+footer {visibility: hidden;}
+</style>
+"""
+
+
+def apply_style() -> None:
+    st.markdown(STYLE, unsafe_allow_html=True)
+
+
+def header(title: str, subtitle: str = "") -> None:
+    """Titre de page et sous-titre discret."""
+    st.title(title)
+    if subtitle:
+        st.markdown(f'<p class="ga-subtitle">{subtitle}</p>', unsafe_allow_html=True)
+
+
+def section(title: str) -> None:
+    """Petit intertitre en capitales, pour séparer les blocs d'une page."""
+    st.markdown(f'<p class="ga-section">{title}</p>', unsafe_allow_html=True)
 
 
 @st.cache_data(show_spinner="Vérification de la chaîne…", max_entries=64)
@@ -181,8 +213,8 @@ def metrics_display(table: pd.DataFrame) -> pd.DataFrame:
             "Rendement": table["total_return"].map(data.fmt_pct),
             "Rendement annuel": table["cagr"].map(data.fmt_pct),
             "Sharpe": table["sharpe"].map(data.fmt_num),
-            "Perte max (MDD)": table["max_drawdown"].map(data.fmt_pct),
-            "Trades": table["n_trades"].astype("Int64"),
+            "Perte maximale": table["max_drawdown"].map(lambda x: data.fmt_pct(x, signed=False)),
+            "Transactions": table["n_trades"].astype("Int64"),
             "Temps investi": table["exposure"].map(lambda x: f"{x * 100:.0f} %"),
             "Frais payés": table["total_costs"].map(data.fmt_money),
         }

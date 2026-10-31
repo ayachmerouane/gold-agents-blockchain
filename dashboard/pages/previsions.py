@@ -6,16 +6,19 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from common import color, date_range, plot_layout, require_period
+from common import color, date_range, header, plot_layout, require_period, section
 
 from gold_agents.dashboard import data
 
 period = require_period()
-st.title("Prévisions")
+header(
+    "Prévisions",
+    "Ce que chaque modèle prévoyait la veille, comparé à ce qui s'est réellement passé",
+)
 
 forecasters = period.forecasters()
 if not forecasters or period.close.empty:
-    st.info("Ces registres ne contiennent pas de prévisions (seulement des stratégies simples).")
+    st.info("Aucune prévision pour cette période : seules des stratégies simples y ont tourné.")
     st.stop()
 
 # Une entrée par modèle (l'ensemble avec et sans incertitude partagent les mêmes prévisions).
@@ -23,9 +26,8 @@ models: dict[str, str] = {}
 for name in forecasters:
     model_id = str(period.frames[name]["model_id"].dropna().iloc[0])
     models.setdefault(model_id, name)
-labels = {m: f"{m} (registre {data.label(s)})" for m, s in models.items()}
 left, right = st.columns([1, 2])
-model = left.selectbox("Modèle", list(models), format_func=labels.get)
+model = left.selectbox("Modèle", list(models), format_func=data.model_label)
 strategy = models[model]
 with right:
     lo, hi = date_range(period, "forecast_dates")
@@ -47,7 +49,7 @@ level = st.select_slider(
     value=0.95,
     format_func="{:.0%}".format,
     disabled=not has_sigma,
-    help="Intervalle r̂ ± k·σ̂, où σ̂ vient de la dispersion entre graines ou du MC dropout.",
+    help="Intervalle r̂ ± k·σ̂ ; σ̂ mesure le désaccord entre graines ou le MC Dropout.",
 )
 k = {0.68: 1.0, 0.90: 1.645, 0.95: 1.96}[level]
 view = df.loc[lo:hi]
@@ -154,21 +156,23 @@ c[0].metric(
     "Bonne direction",
     f"{np.mean(np.sign(ok['r_hat']) == np.sign(ok['target'])):.1%}",
     help="Part des jours où le signe de r̂ est celui du rendement réel.",
+    border=True,
 )
 c[1].metric(
     "Jours en hausse",
     f"{np.mean(ok['target'] > 0):.1%}",
     help="Référence : toujours prévoir « hausse » donne ce score de direction.",
+    border=True,
 )
-c[2].metric("r̂ moyen", f"{ok['r_hat'].mean():+.3%}")
-c[3].metric("Rendement réel moyen", f"{ok['target'].mean():+.3%}")
+c[2].metric("Rendement prévu moyen", f"{ok['r_hat'].mean():+.3%}", border=True)
+c[3].metric("Rendement réel moyen", f"{ok['target'].mean():+.3%}", border=True)
 
 # --- Tableau par modèle -------------------------------------------------------------------
-st.subheader("Erreurs par modèle (période entière)")
+section("Erreurs par modèle sur toute la période")
 sealed = period.results.get("forecast_metrics")
 if sealed:
     table = pd.DataFrame(sealed)
-    st.caption("Lu dans `resultats.jsonl` (scellé au moment du test).")
+    st.caption("Valeurs scellées dans le registre au moment du test.")
 else:
     rows = []
     for m, s in models.items():
@@ -195,24 +199,23 @@ else:
         }
     )
     table = pd.DataFrame(rows)
-    st.caption("Recalculé depuis les registres (pas de résultats scellés pour cette période).")
+    st.caption("Calculé à partir des prévisions enregistrées dans le registre.")
 
-names = {"b0_zero": "B0 : prévoir 0", "always_up": "Toujours « hausse »"}
 show = pd.DataFrame(
     {
-        "Modèle": table["model"].map(lambda m: names.get(m, m)),
+        "Modèle": table["model"].map(data.model_label),
         "MAE": table["mae"].map(lambda x: f"{x:.5f}"),
         "RMSE": table["rmse"].map(lambda x: f"{x:.5f}"),
         "Bonne direction": table["direction"].map(lambda x: "–" if pd.isna(x) else f"{x:.1%}"),
     }
 )
 if "r2_vs_zero" in table:
-    show["Gain sur B0 (R²)"] = table["r2_vs_zero"].map(lambda x: f"{x:+.2%}")
+    show["Gain sur la référence nulle (R²)"] = table["r2_vs_zero"].map(lambda x: f"{x:+.2%}")
 if "dm_p_value" in table:
-    show["p-value Diebold-Mariano"] = table["dm_p_value"].map(lambda x: f"{x:.3f}")
+    show["Test de Diebold-Mariano (p)"] = table["dm_p_value"].map(lambda x: f"{x:.3f}")
 st.dataframe(show, hide_index=True, width="stretch")
 st.caption(
-    "B0 prévoit un rendement nul chaque jour. Un modèle utile doit faire mieux que B0 "
-    "(MAE et RMSE plus petits) ; la p-value de Diebold-Mariano dit si l'écart est "
-    "significatif (< 0,05)."
+    "La référence nulle prévoit un rendement de 0 chaque jour. Un modèle utile doit faire "
+    "mieux (MAE et RMSE plus petits) ; le test de Diebold-Mariano dit si l'écart est "
+    "significatif (p < 0,05)."
 )

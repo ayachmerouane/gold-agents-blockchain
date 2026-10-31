@@ -1,88 +1,108 @@
-"""Blockchain : explorateur de blocs, vérification, démo de falsification, ancrages."""
+"""Registre blockchain : explorateur de blocs, vérification, démo de falsification, ancrages."""
 
 from __future__ import annotations
 
-import json
-
 import pandas as pd
 import streamlit as st
-from common import PUBLIC_KEY, ROOT, blocks, require_period, verify
+from common import PUBLIC_KEY, ROOT, blocks, header, require_period, section, verify
 
 from gold_agents.dashboard import data
 
 period = require_period()
-st.title("Blockchain : le registre des décisions")
-st.markdown(
-    "Chaque jour simulé est un **bloc** : il contient les événements du jour (prévision, "
-    "signal, ordre, trade, portefeuille), leur racine de Merkle, le hash du bloc précédent, "
-    "une preuve de travail et une **signature Ed25519**. Modifier un ancien bloc casse "
-    "tous les liens suivants ; refaire les liens exige la clé privée, qui n'a jamais quitté "
-    "le PC de l'auteur."
-)
-fp = data.key_fingerprint(PUBLIC_KEY)
-st.caption(
-    f"Clé publique : `ledger/public_key.pem` (empreinte `{fp}`)."
-    if fp
-    else "Clé publique `ledger/public_key.pem` absente : signatures non vérifiables."
+header(
+    "Registre blockchain",
+    "Chaque jour simulé est un bloc signé, chaîné au précédent et ancré sur Ethereum",
 )
 
 files = sorted(period.run.ledger_dir.glob("*.jsonl"), key=lambda p: data.strategy_order(p.stem))
-tab_explore, tab_verify, tab_tamper, tab_anchor = st.tabs(
-    ["Explorateur de blocs", "Vérifier l'intégrité", "Démo de falsification", "Ancrage Sepolia"]
+strategy_files = [p for p in files if p.stem not in data.SPECIAL_LEDGERS]
+n_blocks = sum(len(blocks(p)) for p in files)
+anchors = data.anchor_checks(ROOT)
+fp = data.key_fingerprint(PUBLIC_KEY)
+
+c = st.columns(4)
+c[0].metric("Registres", len(files), border=True)
+c[1].metric("Blocs enregistrés", f"{n_blocks:,}".replace(",", " "), border=True)
+c[2].metric("Ancrages Ethereum", len(anchors), border=True)
+c[3].metric(
+    "Clé de signature",
+    fp[:8] if fp else "absente",
+    help="Empreinte de la clé publique Ed25519 qui vérifie les signatures.",
+    border=True,
 )
 
 
 def file_label(p: object) -> str:
-    stem = getattr(p, "stem", str(p))
-    extra = {"plan": "plan du test (scellé avant le run)", "resultats": "résultats scellés"}
-    return f"{stem}.jsonl : {extra.get(stem, data.label(stem))}"
+    return data.ledger_label(getattr(p, "stem", str(p)))
 
+
+tab_explore, tab_verify, tab_tamper, tab_anchor = st.tabs(
+    [
+        ":material/search: Explorateur de blocs",
+        ":material/verified: Vérifier l'intégrité",
+        ":material/gpp_bad: Démo de falsification",
+        ":material/public: Ancrage public",
+    ]
+)
 
 # --- Explorateur --------------------------------------------------------------------------
 with tab_explore:
-    path = st.selectbox("Registre", files, format_func=file_label, key="explore_file")
+    left, right = st.columns([2, 1])
+    path = left.selectbox("Registre", files, format_func=file_label, key="explore_file")
     chain = blocks(path)
     n = len(chain)
-    index = int(st.number_input(f"Numéro du bloc (0 à {n - 1})", 0, n - 1, 0, key="explore_i"))
+    index = int(right.number_input(f"Bloc (0 à {n - 1})", 0, n - 1, min(1, n - 1), key="explore_i"))
     block = chain[index]
-    st.markdown(
-        f"**Bloc {block['index']}** · date simulée **{block.get('sim_date') or 'genèse'}** · "
-        f"version {block.get('version', 1)} · {len(block['events'])} événement(s)"
-    )
-    c = st.columns(3)
-    c[0].caption("hash du bloc précédent")
-    c[0].code(block["prev_hash"], language=None)
-    c[1].caption("hash de ce bloc")
-    c[1].code(block["hash"], language=None)
-    c[2].caption("bloc suivant pointe vers")
-    c[2].code(chain[index + 1]["prev_hash"] if index + 1 < n else "(dernier bloc)", language=None)
-    head = pd.DataFrame(
-        [
-            ("racine de Merkle", block.get("merkle_root", "–")),
-            ("difficulté (zéros en tête)", block.get("difficulty", "–")),
-            ("nonce (preuve de travail)", block.get("nonce", "–")),
-            ("signature", (block.get("signature") or "–")[:40] + "…"),
-        ],
-        columns=["champ", "valeur"],
-    )
-    st.dataframe(head.astype(str), hide_index=True, width="stretch")
-    st.caption("Événements du bloc")
-    if index == 0:
-        st.json(block["events"], expanded=1)
-    else:
-        for event in block["events"]:
-            st.json(event, expanded=True)
+    when = block.get("sim_date") or "bloc genèse"
+    st.markdown(f"#### Bloc {block['index']} · {when}")
 
-    st.caption("Aperçu des blocs voisins")
+    with st.container(border=True):
+        c = st.columns(3)
+        c[0].caption("Hash du bloc précédent")
+        c[0].code(block["prev_hash"][:24] + "…", language=None)
+        c[1].caption("Hash de ce bloc")
+        c[1].code(block["hash"][:24] + "…", language=None)
+        c[2].caption("Repris par le bloc suivant")
+        c[2].code(
+            chain[index + 1]["prev_hash"][:24] + "…" if index + 1 < n else "dernier bloc",
+            language=None,
+        )
+        c = st.columns(4)
+        c[0].caption("Racine de Merkle")
+        c[0].markdown(f"`{str(block.get('merkle_root', '–'))[:16]}…`")
+        c[1].caption("Preuve de travail")
+        c[1].markdown(f"{block.get('difficulty', '–')} zéros · nonce {block.get('nonce', '–')}")
+        c[2].caption("Signature Ed25519")
+        c[2].markdown(f"`{(block.get('signature') or '–')[8:24]}…`")
+        c[3].caption("Événements")
+        c[3].markdown(str(len(block["events"])))
+
+    section("Contenu du bloc")
+    events = pd.DataFrame(
+        [
+            {
+                "Événement": data.EVENT_LABELS.get(str(e.get("type")), str(e.get("type"))),
+                "Détail": data.event_summary(e),
+            }
+            for e in block["events"]
+        ]
+    )
+    st.dataframe(events, hide_index=True, width="stretch")
+    with st.expander("Données brutes du bloc"):
+        st.json(block["events"], expanded=1 if index == 0 else 2)
+
+    section("Blocs voisins")
     lo = max(0, index - 5)
     near = pd.DataFrame(
         [
             {
-                "bloc": b["index"],
-                "date": b.get("sim_date") or "genèse",
-                "événements": ", ".join(e.get("type", "?") for e in b["events"]),
-                "prev_hash": b["prev_hash"][:16] + "…",
-                "hash": b["hash"][:16] + "…",
+                "Bloc": b["index"],
+                "Date": b.get("sim_date") or "genèse",
+                "Contenu": ", ".join(
+                    data.EVENT_LABELS.get(str(e.get("type")), "?") for e in b["events"]
+                ),
+                "Hash précédent": b["prev_hash"][:14] + "…",
+                "Hash": b["hash"][:14] + "…",
             }
             for b in chain[lo : lo + 11]
         ]
@@ -92,22 +112,22 @@ with tab_explore:
 # --- Vérification -------------------------------------------------------------------------
 with tab_verify:
     st.markdown(
-        "La vérification recalcule pour chaque bloc : le lien `prev_hash`, la racine de "
-        "Merkle des événements, le hash, la preuve de travail et la signature avec la clé "
-        "publique publiée. C'est le même code que `make verify`."
+        "Pour chaque bloc, la vérification recalcule le lien avec le bloc précédent, la "
+        "racine de Merkle des événements, le hash, la preuve de travail, et contrôle la "
+        "signature avec la clé publique publiée."
     )
-    if st.button("Vérifier l'intégrité de tous les registres", type="primary"):
+    if st.button("Vérifier tous les registres", type="primary", icon=":material/verified:"):
         rows = []
         bar = st.progress(0.0)
         for i, p in enumerate(files):
             v = verify(p)
             rows.append(
                 {
-                    "registre": p.name,
-                    "blocs": v["n_blocks"],
-                    "état": "valide" if v["valid"] else "INVALIDE",
-                    "signatures": v["signatures"] if v["valid"] else "–",
-                    "détail": v["text"],
+                    "Registre": file_label(p),
+                    "Blocs": v["n_blocks"],
+                    "État": "Intact" if v["valid"] else "Altéré",
+                    "Signatures": "Vérifiées" if v["valid"] else "–",
+                    "Détail": "" if v["valid"] else f"bloc {v['bad_index']} : {v['reason']}",
                 }
             )
             bar.progress((i + 1) / len(files))
@@ -115,133 +135,145 @@ with tab_verify:
         st.session_state["verify_rows"] = rows
     rows = st.session_state.get("verify_rows")
     if rows:
-        bad = [r for r in rows if r["état"] != "valide"]
+        bad = [r for r in rows if r["État"] != "Intact"]
         if bad:
             st.error(
-                f"{len(bad)} registre(s) invalide(s) : " + ", ".join(r["registre"] for r in bad)
+                f"{len(bad)} registre(s) altéré(s) : " + ", ".join(r["Registre"] for r in bad),
+                icon=":material/error:",
             )
         else:
+            total = f"{sum(r['Blocs'] for r in rows):,}".replace(",", " ")
             st.success(
-                f"Les {len(rows)} registres sont intacts : "
-                f"{sum(r['blocs'] for r in rows)} blocs vérifiés, signatures comprises."
+                f"Les {len(rows)} registres sont intacts : {total} blocs vérifiés, "
+                "signatures comprises.",
+                icon=":material/verified:",
             )
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        table = pd.DataFrame(rows)
+        if not bad:
+            table = table.drop(columns=["Détail"])
+        st.dataframe(table, hide_index=True, width="stretch")
     st.caption(
-        "Le professeur peut faire la même vérification sans installer le projet : "
-        "`uv run scripts/verify_ledger.py` (Python et `cryptography` seulement)."
+        "La même vérification existe en script autonome, livré avec le dépôt, pour qu'un "
+        "tiers la refasse sans installer le projet."
     )
 
 # --- Falsification ------------------------------------------------------------------------
 with tab_tamper:
     st.markdown(
-        "On falsifie une **copie en mémoire** du registre (le fichier n'est jamais modifié), "
-        "puis on relance la vérification. Exemple : gonfler après coup la valeur du "
-        "portefeuille un jour donné."
+        "On falsifie une **copie en mémoire** du registre, jamais le fichier lui-même, puis "
+        "on relance la vérification. Exemple : gonfler après coup la valeur du portefeuille "
+        "un jour donné."
     )
-    strategies = [p for p in files if p.stem not in data.SPECIAL_LEDGERS]
     path = st.selectbox(
-        "Registre à falsifier", strategies, format_func=file_label, key="tamper_file"
+        "Registre à falsifier", strategy_files, format_func=file_label, key="tamper_file"
     )
     chain = blocks(path)
-    c = st.columns(3)
+    c = st.columns(3, vertical_alignment="bottom")
     index = int(c[0].number_input("Bloc", 1, len(chain) - 1, len(chain) // 2, key="tamper_i"))
     current = next(
         (e["value"] for e in chain[index]["events"] if e.get("type") == "PORTFOLIO"), 10000.0
     )
     new_value = c[1].number_input(
         "Nouvelle valeur du portefeuille ($)",
-        value=float(current) * 1.5,
+        value=round(float(current) * 1.5, 2),
         step=1000.0,
         key=f"tamper_v_{path.stem}_{index}",
     )
     c[2].metric(
-        "Valeur enregistrée",
+        f"Valeur enregistrée le {chain[index].get('sim_date')}",
         data.fmt_money(float(current)),
-        f"{chain[index].get('sim_date')}",
-        delta_color="off",
+        border=True,
     )
     mode = st.radio(
-        "Ce que fait le fraudeur",
+        "Ce que tente le fraudeur",
         list(data.TAMPER_MODES),
-        format_func=data.TAMPER_MODES.get,
+        format_func=lambda m: data.TAMPER_MODES[m][:1].upper() + data.TAMPER_MODES[m][1:],
         key="tamper_mode",
     )
-    if st.button("Falsifier la copie et vérifier", type="primary"):
+    if st.button("Falsifier la copie et vérifier", type="primary", icon=":material/gpp_bad:"):
         with st.spinner("Falsification et vérification…"):
             result = data.tamper_value(path, index, float(new_value), mode, PUBLIC_KEY)
         v = result.verification
         if v.valid:
-            st.warning(f"Non détecté : {v.describe()}")
+            st.warning(f"Non détecté : {v.describe()}", icon=":material/warning:")
         else:
-            st.error(f"Falsification détectée au bloc {v.bad_index} : {v.reason}")
+            st.error(
+                f"Falsification détectée au bloc {v.bad_index} : {v.reason}.",
+                icon=":material/gpp_bad:",
+            )
         explain = {
             "edit": "Le contenu ne correspond plus à la racine de Merkle enregistrée.",
             "rehash": "Le bloc re-haché perd sa signature (seul l'auteur peut signer) et le "
             "bloc suivant pointe toujours vers l'ancien hash.",
-            "rewrite": "Le fraudeur a tout re-haché et re-signé, mais avec SA clé : les "
+            "rewrite": "Le fraudeur a tout re-haché et re-signé, mais avec sa propre clé : les "
             "signatures ne correspondent pas à la clé publique publiée.",
         }
-        st.caption(
-            explain[mode] + " Vérification du fichier d'origine : " + verify(path)["text"] + "."
-        )
+        intact = verify(path)["valid"]
+        st.caption(explain[mode] + (" Le registre d'origine, lui, est intact." if intact else ""))
 
-    with st.expander("Les 5 scénarios de la phase 7 en un clic"):
+    with st.expander("Rejouer les cinq scénarios de falsification"):
         if st.button("Lancer les scénarios", key="tamper_all"):
             with st.spinner("Cinq copies falsifiées, cinq vérifications…"):
                 st.session_state["tamper_table"] = data.tamper_scenarios(path, PUBLIC_KEY)
         table = st.session_state.get("tamper_table")
         if table is not None:
-            st.dataframe(table, hide_index=True, width="stretch")
+            shown = table.rename(
+                columns={
+                    "falsification": "Falsification",
+                    "détectée": "Détectée",
+                    "bloc fautif": "Bloc fautif",
+                    "motif": "Motif",
+                }
+            )
+            st.dataframe(shown, hide_index=True, width="stretch")
 
 # --- Ancrage ------------------------------------------------------------------------------
 with tab_anchor:
     st.markdown(
-        "Le hash de tête des registres est publié dans une transaction du réseau de test "
-        "Ethereum **Sepolia**. La blockchain publique date la transaction : elle prouve que "
-        "les registres existaient déjà, tels quels, à ce moment."
+        "L'empreinte des registres est publiée dans une transaction du réseau de test "
+        "Ethereum **Sepolia**. La date de la transaction prouve que les registres existaient "
+        "déjà, tels quels, à ce moment-là."
     )
-    anchors = data.anchor_checks(ROOT)
     if not anchors:
-        st.info("Aucun ancrage dans `ledger/anchors.json`.")
+        st.info("Aucun ancrage public pour le moment.")
     for a in reversed(anchors):
-        icon = {"conforme": ":material/verified:", "DIFFÉRENT": ":material/error:"}.get(
-            a["status"], ":material/help:"
-        )
+        ok = a["status"] == "conforme"
+        badge = {
+            "conforme": ":green-badge[:material/verified: Conforme]",
+            "DIFFÉRENT": ":red-badge[:material/error: Différent]",
+        }.get(a["status"], ":gray-badge[Partiel : registres non présents]")
         with st.container(border=True):
-            st.markdown(
-                f"{icon} **{a['anchored_at'][:16].replace('T', ' ')} UTC** · bloc Sepolia "
-                f"{a['block_number']} · état : **{a['status']}**"
+            left, right = st.columns([4, 1], vertical_alignment="center")
+            left.markdown(
+                f"**{a['anchored_at'][:16].replace('T', ' à ')} UTC** · bloc Ethereum "
+                f"{a['block_number']:,} · {badge}".replace(",", " ")
             )
-            st.link_button("Voir la transaction sur Etherscan", a["url"])
-            st.caption(
-                f"Empreinte publiée : `gold-agents ledger sha256:{a['digest']}` "
-                "(sur Etherscan : « View input as UTF-8 »)."
+            right.link_button("Etherscan", a["url"], icon=":material/open_in_new:", width="stretch")
+            files_table = a["files"].copy()
+            files_table["fichier"] = files_table["fichier"].map(data.ledger_file_label)
+            files_table["hash de tête ancré"] = files_table["hash de tête ancré"].str[:16] + "…"
+            files_table["état"] = (
+                files_table["état"]
+                .map({"identique": "Identique", "DIFFÉRENT": "Différent"})
+                .fillna("Non présent")
             )
-            st.dataframe(a["files"], hide_index=True, width="stretch")
+            files_table.columns = ["Registre", "Blocs", "Hash de tête ancré", "État"]
+            with st.expander(f"{len(files_table)} registre(s) couverts", expanded=ok):
+                st.dataframe(files_table, hide_index=True, width="stretch")
     st.caption(
-        "« absent de ce PC » : le registre n'est pas versionné (par exemple ceux de la "
+        "« Non présent » : registre de travail conservé hors du dépôt (par exemple sur la "
         "validation) ; seuls les registres présents peuvent être comparés."
     )
 
-with st.expander("Ce que la blockchain garantit, et ce qu'elle ne garantit pas"):
+section("Ce que la blockchain garantit")
+c = st.columns(2)
+with c[0].container(border=True):
     st.markdown(
-        "- Elle garantit l'**intégrité** (aucune décision modifiée, ajoutée ou supprimée) "
-        "et l'**antériorité** (les décisions existaient à la date de l'ancrage).\n"
-        "- Elle ne garantit **pas** que les prévisions sont bonnes, que la stratégie est "
-        "rentable, ni que le code qui a produit les décisions était correct."
+        "**Garanti**\n\n- Intégrité : aucune décision modifiée, ajoutée ou supprimée.\n"
+        "- Antériorité : les décisions existaient à la date de l'ancrage."
     )
-    plan = period.plan
-    if plan:
-        st.caption("Bloc genèse du plan du test (réglages figés avant le run) :")
-        st.code(
-            json.dumps(
-                {
-                    k: plan[k]
-                    for k in ("planned_at", "settings", "main_system", "frozen_settings")
-                    if k in plan
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            language="json",
-        )
+with c[1].container(border=True):
+    st.markdown(
+        "**Non garanti**\n\n- Que les prévisions soient bonnes ou la stratégie rentable.\n"
+        "- Que le code qui a produit les décisions soit correct."
+    )

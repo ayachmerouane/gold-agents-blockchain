@@ -41,3 +41,17 @@ def test_blockchain_buttons_verify_and_detect_tampering() -> None:
     tamper = next(b for b in at.button if b.label.startswith("Falsifier"))
     tamper.click().run()
     assert any("Falsification détectée" in e.value for e in at.error)
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_no_file_names_or_commands_on_screen(page: str) -> None:
+    at = _app(page)
+    texts = [
+        e.value
+        for kind in ("markdown", "caption", "info", "title", "subheader")
+        for e in getattr(at, kind)
+    ]
+    texts += [str(o) for box in at.selectbox for o in box.options]
+    shown = "\n".join(str(t) for t in texts)
+    for word in (".jsonl", "outputs/", "ledger/", "make ", "uv run", ".pem"):
+        assert word not in shown, (page, word)

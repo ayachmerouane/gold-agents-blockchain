@@ -1,0 +1,10 @@
+# Thème du tableau de bord (lu par `streamlit run` lancé depuis la racine du dépôt).
+[theme]
+primaryColor = "#C9A227"
+baseRadius = "medium"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
