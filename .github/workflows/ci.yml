@@ -31,3 +31,18 @@ jobs:
 
       - name: Tests (pytest)
         run: uv run pytest -m "not slow" --cov --cov-report=term-missing
+
+  verify-ledger:
+    # Le script du professeur sur une machine vierge : sans installer le projet.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Vérifier les registres de référence avec scripts/verify_ledger.py
+        run: |
+          uv run --no-project --python 3.11 scripts/verify_ledger.py \
+            tests/golden/ledger/demo_v2.jsonl tests/golden/ledger/reglages_figes_v1.jsonl \
+            --public-key tests/golden/ledger/demo_public_key.pem

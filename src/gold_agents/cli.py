@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
@@ -12,6 +13,9 @@ from gold_agents.config import DEFAULT_CONFIG_PATH, load_config
 from gold_agents.data import clean as cleaning
 from gold_agents.data import sources, update
 from gold_agents.data.load import read_kaggle_csv, read_update_csv
+
+if TYPE_CHECKING:
+    from gold_agents.blockchain.signing import Signer
 
 app = typer.Typer(help="Investissement simulé sur l'or : DL, agents et blockchain.")
 
@@ -286,6 +290,25 @@ BACKTEST_OUT_OPTION = typer.Option(
     Path("outputs/results/backtest"), "--out", help="Dossier des résultats et du schéma."
 )
 LEDGER_DIR_OPTION = typer.Option(Path("outputs/ledger"), "--ledger-dir", help="Registres.")
+PRIVATE_KEY_OPTION = typer.Option(
+    Path("keys/ledger_ed25519.key"), "--key", help="Clé privée qui signe les registres."
+)
+
+
+def _ledger_signer(key: Path) -> Signer | None:
+    """Charge la clé privée ; sans elle, les registres sont écrits non signés."""
+    from gold_agents.blockchain.signing import fingerprint, load_signer
+
+    if not key.exists():
+        typer.echo(
+            f"ATTENTION : {key} absente, registres NON signés "
+            "(créer la clé avec `uv run gold-agents keygen`).",
+            err=True,
+        )
+        return None
+    signer = load_signer(key)
+    typer.echo(f"Registres signés avec la clé {fingerprint(signer.public_key)}.")
+    return signer
 
 
 @app.command()
@@ -294,6 +317,7 @@ def backtest(
     out_dir: Path = BACKTEST_OUT_OPTION,
     ledger_dir: Path = LEDGER_DIR_OPTION,
     costs_factor: float = typer.Option(1.0, "--costs", help="Multiplie frais et slippage."),
+    key: Path = PRIVATE_KEY_OPTION,
 ) -> None:
     """Backtests de référence (Buy & Hold, SMA 20/50) sur le test, registre et schéma."""
     import pandas as pd
@@ -308,8 +332,9 @@ def backtest(
         typer.echo(f"{path} absent : lancer d'abord `make data`.", err=True)
         raise typer.Exit(code=1)
     frame = pd.read_parquet(path, columns=["date", "split", "sample", "open", "close"])
+    signer = _ledger_signer(key)
     runs = report.run_reference_backtests(
-        cfg, frame, sha256_file(path), out_dir, ledger_dir, costs_factor
+        cfg, frame, sha256_file(path), out_dir, ledger_dir, costs_factor, signer
     )
     start, end = report.evaluation_period(frame)
     typer.echo(f"Période de test : du {start} au {end}, frais x {costs_factor:g}.\n")
@@ -322,7 +347,8 @@ def backtest(
         if 0 < len(trades) <= 40:
             typer.echo(" ".join(f"{t.side[0]}{t.exec_date:%y-%m-%d}" for t in trades))
     typer.echo("\nTest de falsification sur le registre Buy & Hold :")
-    typer.echo("\n".join(report.tamper_lines(runs[0])))
+    public_key = signer.public_key if signer else None
+    typer.echo("\n".join(report.tamper_lines(runs[0], public_key)))
     figure = report.backtest_figure(runs, cfg, out_dir / "backtest_test.png")
     typer.echo(f"\nSchéma : {figure}\nRésultats : {out_dir}  Registres : {ledger_dir}")
     if not all(run.verification.valid for run in runs):
@@ -354,6 +380,7 @@ def simulate(
     forecast_dir: Path = FORECAST_DIR_OPTION,
     ledger_dir: Path = LEDGER_DIR_OPTION,
     costs_factor: float = typer.Option(1.0, "--costs", help="Multiplie frais et slippage."),
+    key: Path = PRIVATE_KEY_OPTION,
 ) -> None:
     """Agents (prévision, stratégie, risque, exécution) contre Buy & Hold : registre et schéma."""
     import time
@@ -391,8 +418,9 @@ def simulate(
     typer.echo("\nPrévisions des modèles (agent de prévision) :")
     typer.echo(ar.diagnostics(tables, cfg).to_string())
 
+    signer = _ledger_signer(key)
     results = ar.run_agent_backtests(
-        cfg, frame, tables, split, sha256_file(path), out, ledgers, costs_factor
+        cfg, frame, tables, split, sha256_file(path), out, ledgers, costs_factor, signer
     )
     typer.echo("\nRésultats :")
     typer.echo(ar.comparison_table(results).T.to_string())
@@ -641,6 +669,7 @@ def freeze(
     config: Path = CONFIG_OPTION,
     tuning_dir: Path = TUNING_DIR_OPTION,
     ledger_dir: Path = LEDGER_DIR_OPTION,
+    key: Path = PRIVATE_KEY_OPTION,
 ) -> None:
     """Fige les réglages : les compare à `tune`, puis les scelle dans un bloc genèse."""
     import hashlib
@@ -694,9 +723,11 @@ def freeze(
             "tuning": {"grid_sha256": chosen["grid_sha256"], **chosen},
         }
     ]
-    path = write_jsonl(Chain.start(events), ledger_dir / "reglages_figes.jsonl")
+    signer = _ledger_signer(key)
+    path = write_jsonl(Chain.start(events, signer), ledger_dir / "reglages_figes.jsonl")
     chain = read_jsonl(path)
-    typer.echo(f"Réglages figés dans {path} : {chain.verify().describe()}.")
+    verification = chain.verify(signer.public_key if signer else None)
+    typer.echo(f"Réglages figés dans {path} : {verification.describe()}.")
     typer.echo(f"Empreinte du bloc genèse : {chain.head.hash}")
 
 
@@ -707,20 +738,51 @@ def evaluate(config: Path = CONFIG_OPTION) -> None:
 
 
 LEDGERS_ARGUMENT = typer.Argument(None, help="Fichiers .jsonl (défaut : outputs/ledger/).")
+PUBLIC_KEY_OPTION = typer.Option(
+    Path("ledger/public_key.pem"), "--public-key", help="Clé publique Ed25519 publiée."
+)
 
 
 @app.command()
-def verify(ledgers: list[Path] | None = LEDGERS_ARGUMENT) -> None:
-    """Vérifie l'intégrité des registres (hash de chaque bloc et liens entre blocs)."""
+def keygen(
+    key: Path = PRIVATE_KEY_OPTION,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    force: bool = typer.Option(False, "--force", help="Remplacer une clé existante."),
+) -> None:
+    """Crée la paire de clés Ed25519 du registre (la clé privée reste sur ce PC)."""
+    from gold_agents.blockchain.signing import fingerprint, generate_keypair
+
+    try:
+        signer = generate_keypair(key, public_key, overwrite=force)
+    except FileExistsError as exc:
+        typer.echo(f"{exc}. Utiliser --force pour la remplacer (registres à resigner).", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Clé privée : {key}  (NE JAMAIS la versionner ni la partager)")
+    typer.echo(f"Clé publique : {public_key}  (à versionner : elle sert à vérifier)")
+    typer.echo(f"Empreinte de la clé publique : {fingerprint(signer.public_key)}")
+
+
+@app.command()
+def verify(
+    ledgers: list[Path] | None = LEDGERS_ARGUMENT,
+    public_key: Path = PUBLIC_KEY_OPTION,
+) -> None:
+    """Vérifie les registres : liens, hash, Merkle, preuve de travail et signatures."""
+    from gold_agents.blockchain.signing import fingerprint, load_public_key
     from gold_agents.blockchain.storage import read_jsonl
 
-    paths = ledgers or sorted(Path("outputs/ledger").glob("*.jsonl"))
+    paths = ledgers or sorted(Path("outputs/ledger").rglob("*.jsonl"))
     if not paths:
         typer.echo("Aucun registre trouvé : lancer d'abord `make backtest`.", err=True)
         raise typer.Exit(code=1)
+    key = load_public_key(public_key) if public_key.exists() else None
+    if key is not None:
+        typer.echo(f"Clé publique {public_key} ({fingerprint(key)}).")
+    else:
+        typer.echo(f"{public_key} absente : signatures non vérifiées.")
     ok = True
     for path in paths:
-        result = read_jsonl(path).verify()
+        result = read_jsonl(path).verify(key)
         ok &= result.valid
         typer.echo(f"{path} : {result.describe()}")
     if not ok:
