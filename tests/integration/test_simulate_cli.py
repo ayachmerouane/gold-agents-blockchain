@@ -82,7 +82,7 @@ def test_train_then_simulate(tmp_path: Path, cfg: Config, clean_series: pd.DataF
     decisions = pd.read_csv(out / "agents_ensemble_mc_decisions.csv")
     assert decisions["sigma_hat"].notna().all() and (decisions["sigma_hat"] > 0).all()
     assert set(decisions["rule"]) <= {"signal", "stop_loss", "max_drawdown", "rejet"}
-    res = runner.invoke(
-        app, ["verify", *map(str, sorted((ledgers / "agents_val").glob("*.jsonl")))]
-    )
+    # Registres non signés (pas de clé dans le test) : sans la clé publique du dépôt.
+    files = [str(p) for p in sorted((ledgers / "agents_val").glob("*.jsonl"))]
+    res = runner.invoke(app, ["verify", *files, "--public-key", str(tmp_path / "aucune.pem")])
     assert res.exit_code == 0 and res.output.count("chaîne valide") == 7

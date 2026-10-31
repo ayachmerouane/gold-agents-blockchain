@@ -1,0 +1,48 @@
+[
+  {
+    "anchored_at": "2026-10-31T20:19:25+00:00",
+    "network": "sepolia",
+    "chain_id": 11155111,
+    "tx_hash": "0x21d3eb0250c14453e33d5b98f3847ee601d94f07b23afd1224718cbf793a492f",
+    "block_number": 12036178,
+    "sender": "0x9Ed35Fdbb7a34A632a821301DD3c94B64Ffefb2B",
+    "digest": "ce416108891ddfba186b0bf2053b6766554c441d8a7e24a8ca2e5daf2f4cac9b",
+    "ledgers": [
+      {
+        "file": "outputs/ledger/agents_val/agents_ensemble.jsonl",
+        "blocks": 745,
+        "head": "00076897c18ebe2f476d9878fc8f20e5a14c756eb1b2052c80d3e09dbc4a6bbc"
+      },
+      {
+        "file": "outputs/ledger/agents_val/agents_ensemble_mc.jsonl",
+        "blocks": 745,
+        "head": "000b6ba66269ffd6684b89cd3390ee4a64f08e46947753f07c16e80775dbb734"
+      },
+      {
+        "file": "outputs/ledger/agents_val/agents_gru.jsonl",
+        "blocks": 745,
+        "head": "0007f51598aa6e0a500c7b4665461aa9e17b61a4fd6c043163aa38f04f744cef"
+      },
+      {
+        "file": "outputs/ledger/agents_val/agents_lightgbm.jsonl",
+        "blocks": 745,
+        "head": "0003bd7afc1994219c508f36b6f4a80117eb2ad0fed4fd4fce7131ab60f27cf4"
+      },
+      {
+        "file": "outputs/ledger/agents_val/agents_lstm.jsonl",
+        "blocks": 745,
+        "head": "000f6b0a14f443601c50e55efa190beb779a3f94f89c5f9af8e02a120b16f04c"
+      },
+      {
+        "file": "outputs/ledger/agents_val/buy_and_hold.jsonl",
+        "blocks": 745,
+        "head": "0008bd7d905f921a9513bd5b594c99bf2faf942a558352af282c84be26204595"
+      },
+      {
+        "file": "outputs/ledger/agents_val/sma_20_50.jsonl",
+        "blocks": 745,
+        "head": "0002d0d097f89b946cb372ba47dc3a535bfd62c600c7513a8d56daa4ff9370bd"
+      }
+    ]
+  }
+]

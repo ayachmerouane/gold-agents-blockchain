@@ -789,5 +789,50 @@ def verify(
         raise typer.Exit(code=1)
 
 
+ENV_OPTION = typer.Option(Path(".env"), "--env", help="Fichier .env du portefeuille de test.")
+ANCHORS_OPTION = typer.Option(
+    Path("ledger/anchors.json"), "--anchors", help="Journal des ancrages (versionné)."
+)
+
+
+@app.command()
+def anchor(
+    ledgers: list[Path] | None = LEDGERS_ARGUMENT,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    env: Path = ENV_OPTION,
+    anchors_path: Path = ANCHORS_OPTION,
+) -> None:
+    """Ancre le dernier hash des registres sur Sepolia (bonus, extra `anchor`)."""
+    from gold_agents.blockchain import anchor as anchoring
+    from gold_agents.blockchain.signing import load_public_key
+    from gold_agents.blockchain.storage import read_jsonl
+
+    paths = ledgers or sorted(Path("outputs/ledger").rglob("*.jsonl"))
+    if not paths:
+        typer.echo("Aucun registre trouvé.", err=True)
+        raise typer.Exit(code=1)
+    key = load_public_key(public_key) if public_key.exists() else None
+    heads = []
+    for path in paths:
+        chain = read_jsonl(path)
+        result = chain.verify(key)
+        if not result.valid:  # on n'ancre jamais un registre invalide
+            typer.echo(f"{path} : {result.describe()}", err=True)
+            raise typer.Exit(code=1)
+        heads.append(anchoring.LedgerHead(path.as_posix(), len(chain), chain.head.hash))
+        typer.echo(f"{path} : {result.describe()}")
+    try:
+        values = anchoring.read_env(env)
+    except KeyError as exc:
+        typer.echo(f"{exc.args[0]}. Voir la section « Ancrage Sepolia » du README.", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"\nEmpreinte à ancrer : {anchoring.anchor_digest(heads)}")
+    typer.echo("Envoi de la transaction sur Sepolia (jusqu'à quelques minutes)...")
+    done = anchoring.send_anchor(heads, values["SEPOLIA_RPC_URL"], values["SEPOLIA_PRIVATE_KEY"])
+    path = anchoring.append_anchor(done, anchors_path)
+    typer.echo(f"Ancré dans le bloc {done.block_number} : {anchoring.etherscan_url(done.tx_hash)}")
+    typer.echo(f"Ancrage ajouté à {path} (à versionner).")
+
+
 if __name__ == "__main__":
     app()

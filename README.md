@@ -184,6 +184,24 @@ uv run scripts/verify_ledger.py outputs/ledger   # script autonome du professeur
 - **`scripts/verify_ledger.py`** : réécrit toutes les règles sans importer le projet (deux implémentations, même verdict, testé). Options `--public-key`, `--head <hash attendu>`, `--strict`. Un job de la CI le lance sur une machine vierge avec le registre de démonstration `tests/golden/ledger/demo_v2.jsonl`.
 - **Tests de falsification** (`tests/ledger/`) : événement modifié (racine de Merkle), en-tête modifié (hash), bloc re-haché (signature), chaîne réécrite avec une autre clé (signature), preuve de travail absente, bloc supprimé, inséré, inversé, versions mélangées, rejeu identique.
 
+## Ancrage public sur Sepolia (bonus)
+
+Publie dans une transaction Sepolia (réseau de test d'Ethereum, gratuit) une empreinte des derniers hash des registres. La transaction est datée et publique : elle prouve que les registres existaient déjà, tels quels, à cette date.
+
+1. MetaMask : un compte **de test** (jamais de vrai argent), réseau Sepolia (Paramètres > Avancé > « Afficher les réseaux de test »).
+2. Un peu d'ETH de test gratuit, par exemple sur le faucet Google Cloud (Ethereum Sepolia), avec l'adresse du compte.
+3. `cp .env.example .env`, puis y coller la clé privée de ce compte de test (`.env` n'est jamais versionné).
+
+```bash
+uv sync --all-extras                          # installe web3 (extra anchor)
+uv run gold-agents anchor outputs/ledger/agents_val/*.jsonl
+uv run scripts/verify_ledger.py outputs/ledger/agents_val --anchors ledger/anchors.json
+```
+
+- `anchor` vérifie chaque registre (signatures comprises) avant d'ancrer, refuse tout réseau autre que Sepolia, envoie 0 ETH de l'adresse vers elle-même avec le texte `gold-agents ledger sha256:<empreinte>` en données, et ajoute la transaction à `ledger/anchors.json` (à versionner). Le lien Etherscan est affiché.
+- `verify_ledger.py --anchors` relit la transaction avec un nœud public (sans portefeuille ni web3) et vérifie que chaque registre ancré a le même dernier hash qu'au moment de l'ancrage.
+- Pour le professeur : sur Etherscan, « View input as UTF-8 » montre l'empreinte ; la date est celle du bloc.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -208,6 +226,7 @@ uv run scripts/verify_ledger.py outputs/ledger   # script autonome du professeur
 | `make keygen` | Paire de clés Ed25519 du registre (une seule fois) |
 | `make verify` | Vérification des registres de `outputs/ledger/` (signatures avec `ledger/public_key.pem`) |
 | `make verify-ledger` | Script autonome `scripts/verify_ledger.py` sur `ledger/` |
+| `make anchor` | Bonus : ancre le dernier hash des registres sur Sepolia (`.env` requis) |
 | `make dashboard` | Tableau de bord Streamlit |
 | `make all` | Chaîne complète |
 
