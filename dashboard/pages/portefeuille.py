@@ -86,7 +86,7 @@ fig = go.Figure(
         z=expo[picked].T.to_numpy(),
         x=expo.index,
         y=[data.label(n) for n in picked],
-        colorscale=[[0, "#131C2E"], [1, GOLD]],
+        colorscale=[[0, "rgba(128,128,128,0.12)"], [1, GOLD]],
         zmin=0,
         zmax=1,
         ygap=6,
@@ -95,7 +95,7 @@ fig = go.Figure(
     )
 )
 fig.update_layout(
-    title="En or (doré) ou en liquidités (sombre), jour par jour", hovermode="closest"
+    title="Investi en or (doré) ou en liquidités (gris), jour par jour", hovermode="closest"
 )
 plot_layout(fig, height=80 + 46 * len(picked))
 fig.update_yaxes(autorange="reversed", showgrid=False)

@@ -51,7 +51,7 @@ fig.add_trace(
         x=close.index,
         y=close,
         name="Clôture de l'or",
-        line={"color": "#AEB6C6", "width": 1.5},
+        line={"color": "#7C8599", "width": 1.5},
         hovertemplate="%{y:,.2f} $",
     )
 )
@@ -72,7 +72,7 @@ if len(trades):
                     "symbol": symbol,
                     "size": 12,
                     "color": col,
-                    "line": {"width": 1.5, "color": "#0B1220"},
+                    "line": {"width": 1, "color": "rgba(128,128,128,0.6)"},
                 },
                 customdata=t[["reason", "qty", "fees"]].to_numpy(),
                 hovertemplate=f"<b>{name}</b> à %{{y:,.2f}} $<br>%{{customdata[0]}}<br>"

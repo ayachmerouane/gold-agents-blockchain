@@ -1,20 +1,35 @@
 # Thème du tableau de bord (lu par `streamlit run` lancé depuis la racine du dépôt).
+# Deux modes : clair et sombre. Par défaut, celui du système ; on change dans
+# le menu ⋮ en haut à droite (Light, Dark ou System).
 [theme]
-base = "dark"
+primaryColor = "#C9A227"
+baseRadius = "medium"
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#B8901F"
+backgroundColor = "#F7F8FB"
+secondaryBackgroundColor = "#EDF0F5"
+textColor = "#141B2D"
+borderColor = "#D9DEE8"
+
+[theme.light.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EDF0F5"
+
+[theme.dark]
 primaryColor = "#D4AF37"
 backgroundColor = "#0B1220"
 secondaryBackgroundColor = "#131C2E"
 textColor = "#E6E9EF"
 borderColor = "#24304A"
-baseRadius = "medium"
-showWidgetBorder = true
 
-[theme.sidebar]
+[theme.dark.sidebar]
 backgroundColor = "#0F1729"
 secondaryBackgroundColor = "#18233A"
 
 [client]
-toolbarMode = "minimal"
+toolbarMode = "viewer"
 
 [browser]
 gatherUsageStats = false

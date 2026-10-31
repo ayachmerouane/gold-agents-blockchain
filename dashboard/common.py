@@ -113,39 +113,39 @@ def require_period() -> Period:
     return period
 
 
+# Couleurs lisibles en mode clair comme en mode sombre : le texte principal hérite du
+# thème, les fonds et bordures sont des gris semi-transparents.
 GOLD = "#C9A227"
-GOLD = "#D4AF37"
-INK, MUTED, GRID = "#E6E9EF", "#8B95A9", "rgba(139,149,169,0.14)"
+MUTED, GRID, LINE = "#7C8599", "rgba(128,128,128,0.16)", "rgba(128,128,128,0.35)"
 STYLE = """
 <style>
 .block-container {padding-top: 2rem; padding-bottom: 3rem; max-width: 1320px;}
 h1 {font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0 !important;
     font-size: 2.1rem !important;}
 h2, h3, h4 {font-weight: 600; letter-spacing: -0.01em;}
-.ga-subtitle {color: #8B95A9; font-size: 0.98rem; margin: 0.1rem 0 1.5rem;}
+.ga-subtitle {color: #7C8599; font-size: 0.98rem; margin: 0.1rem 0 1.5rem;}
 .ga-section {font-size: 0.76rem; font-weight: 700; letter-spacing: 0.12em;
-             text-transform: uppercase; color: #D4AF37; margin: 1.8rem 0 0.6rem;}
-.ga-kpis {display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-          gap: 14px; margin: 0.4rem 0 1rem;}
-.ga-kpi {background: linear-gradient(160deg, #16213A 0%, #111A2D 100%);
-         border: 1px solid #24304A; border-radius: 12px; padding: 16px 18px;}
+             text-transform: uppercase; color: #B8901F; margin: 1.8rem 0 0.6rem;}
+.ga-kpis {display: grid; gap: 14px; margin: 0.4rem 0 1rem;}
+.ga-kpi {background: rgba(128,128,128,0.07); border: 1px solid rgba(128,128,128,0.22);
+         border-radius: 12px; padding: 16px 18px;}
 .ga-kpi .lbl {font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase;
-              color: #8B95A9;}
-.ga-kpi .val {font-size: 1.6rem; font-weight: 700; color: #E6E9EF; margin-top: 4px;
+              color: #7C8599;}
+.ga-kpi .val {font-size: 1.6rem; font-weight: 700; margin-top: 4px;
               font-variant-numeric: tabular-nums;}
-.ga-kpi .sub {font-size: 0.8rem; margin-top: 2px; color: #8B95A9;}
-.ga-kpi .up {color: #2fb344;} .ga-kpi .down {color: #e5484d;}
-.ga-kpi.accent {border-color: rgba(212,175,55,0.55);}
-.ga-kpi.accent .val {color: #D4AF37;}
-.ga-chain {display: flex; align-items: center; gap: 0; overflow-x: auto; padding: 6px 0 12px;}
-.ga-block {min-width: 150px; background: #131C2E; border: 1px solid #24304A;
-           border-radius: 10px; padding: 10px 12px;}
-.ga-block.current {border-color: #D4AF37; box-shadow: 0 0 0 1px rgba(212,175,55,0.35);}
-.ga-block .n {font-size: 0.72rem; color: #8B95A9; letter-spacing: 0.05em;}
-.ga-block .d {font-size: 0.95rem; font-weight: 600; color: #E6E9EF;}
-.ga-block .e {font-size: 0.75rem; color: #8B95A9; margin-top: 2px;}
-.ga-block .ok {font-size: 0.72rem; color: #2fb344; margin-top: 4px;}
-.ga-link {color: #D4AF37; font-size: 1.1rem; padding: 0 6px;}
+.ga-kpi .sub {font-size: 0.8rem; margin-top: 2px; color: #7C8599;}
+.ga-kpi .up {color: #1f9d3a;} .ga-kpi .down {color: #d93f44;}
+.ga-kpi.accent {border-color: rgba(201,162,39,0.65); background: rgba(201,162,39,0.08);}
+.ga-kpi.accent .val {color: #C9A227;}
+.ga-chain {display: flex; align-items: center; overflow-x: auto; padding: 6px 0 12px;}
+.ga-block {min-width: 150px; background: rgba(128,128,128,0.07);
+           border: 1px solid rgba(128,128,128,0.22); border-radius: 10px; padding: 10px 12px;}
+.ga-block.current {border-color: #C9A227; box-shadow: 0 0 0 1px rgba(201,162,39,0.35);}
+.ga-block .n {font-size: 0.72rem; color: #7C8599; letter-spacing: 0.05em;}
+.ga-block .d {font-size: 0.95rem; font-weight: 600;}
+.ga-block .e {font-size: 0.75rem; color: #7C8599; margin-top: 2px;}
+.ga-block .ok {font-size: 0.72rem; color: #1f9d3a; margin-top: 4px;}
+.ga-link {color: #C9A227; font-size: 1.1rem; padding: 0 6px;}
 footer {visibility: hidden;}
 </style>
 """
@@ -210,35 +210,20 @@ def date_range(period: Period, key: str) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def plot_layout(fig: Any, height: int = 420, y_title: str = "", y_format: str = "") -> Any:
-    """Mise en page commune : fond transparent, grille discrète, légende sous le graphique."""
+    """Mise en page commune. Les couleurs de texte viennent du thème Streamlit (clair ou
+    sombre) ; fonds transparents et grille grise conviennent aux deux."""
     fig.update_layout(
         height=height,
-        template="plotly_dark",
         separators=", ",  # décimales à la virgule, milliers à l'espace
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "Source Sans Pro, sans-serif", "color": INK, "size": 13},
         margin={"l": 8, "r": 8, "t": 48, "b": 8},
         hovermode="x unified",
-        hoverlabel={"bgcolor": "#131C2E", "bordercolor": "#24304A", "font": {"color": INK}},
-        title={
-            "x": 0,
-            "xanchor": "left",
-            "y": 0.97,
-            "yanchor": "top",
-            "font": {"size": 15, "color": INK},
-        },
-        legend={"orientation": "h", "yanchor": "top", "y": -0.1, "x": 0, "font": {"color": MUTED}},
+        title={"x": 0, "xanchor": "left", "y": 0.97, "yanchor": "top", "font": {"size": 15}},
+        legend={"orientation": "h", "yanchor": "top", "y": -0.1, "x": 0},
     )
-    fig.update_yaxes(
-        title_text=y_title,
-        tickformat=y_format,
-        gridcolor=GRID,
-        zeroline=False,
-        tickfont={"color": MUTED},
-        title_font={"color": MUTED},
-    )
-    fig.update_xaxes(gridcolor=GRID, showgrid=False, tickfont={"color": MUTED}, linecolor="#24304A")
+    fig.update_yaxes(title_text=y_title, tickformat=y_format, gridcolor=GRID, zeroline=False)
+    fig.update_xaxes(gridcolor=GRID, showgrid=False, linecolor=LINE)
     return fig
 
 

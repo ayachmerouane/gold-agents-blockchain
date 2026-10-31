@@ -133,7 +133,7 @@ for name in period.strategies:
             marker={
                 "size": 18 if name == chosen else 12,
                 "color": color(name),
-                "line": {"width": 2, "color": GOLD if name == chosen else "#0B1220"},
+                "line": {"width": 2, "color": GOLD if name == chosen else "rgba(128,128,128,0.4)"},
             },
             hovertemplate="volatilité %{x:.1%}<br>rendement annuel %{y:.1%}"
             "<extra>%{fullData.name}</extra>",
@@ -194,6 +194,7 @@ for name in period.strategies:
     start = year_end.shift(1).fillna(float(f.iloc[0]))
     yearly[data.label(name)] = year_end / start - 1
 heat = pd.DataFrame(yearly).T
+ink = "#E6E9EF" if st.context.theme.type == "dark" else "#141B2D"
 if heat.shape[1] > 1:
     limit = float(heat.abs().max().max()) or 1.0
     fig = go.Figure(
@@ -201,12 +202,12 @@ if heat.shape[1] > 1:
             z=heat.to_numpy(),
             x=[str(y) for y in heat.columns],
             y=list(heat.index),
-            colorscale=[[0, "#e5484d"], [0.5, "#1B2438"], [1, "#2fb344"]],
+            colorscale=[[0, "#d93f44"], [0.5, "rgba(128,128,128,0.12)"], [1, "#1f9d3a"]],
             zmin=-limit,
             zmax=limit,
             text=[[data.fmt_pct(v, 0) for v in r] for r in heat.to_numpy()],
             texttemplate="%{text}",
-            textfont={"color": "#E6E9EF", "size": 12},
+            textfont={"size": 12, "color": ink},
             xgap=3,
             ygap=3,
             showscale=False,

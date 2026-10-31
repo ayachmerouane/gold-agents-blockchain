@@ -43,5 +43,6 @@ with st.sidebar:
         if st.session_state.get("period") not in names:
             st.session_state["period"] = names[0]
         st.selectbox("Période", names, format_func=titles.get, key="period")
+    st.caption("Mode clair ou sombre : menu ⋮ en haut à droite (Light, Dark ou System).")
 
 nav.run()
