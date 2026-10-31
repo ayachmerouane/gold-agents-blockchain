@@ -731,16 +731,425 @@ def freeze(
     typer.echo(f"Empreinte du bloc genèse : {chain.head.hash}")
 
 
-@app.command()
-def evaluate(config: Path = CONFIG_OPTION) -> None:
-    """Calcule les métriques et génère les figures."""
-    _todo("evaluate")
-
-
 LEDGERS_ARGUMENT = typer.Argument(None, help="Fichiers .jsonl (défaut : outputs/ledger/).")
 PUBLIC_KEY_OPTION = typer.Option(
     Path("ledger/public_key.pem"), "--public-key", help="Clé publique Ed25519 publiée."
 )
+ENV_OPTION = typer.Option(Path(".env"), "--env", help="Fichier .env du portefeuille de test.")
+ANCHORS_OPTION = typer.Option(
+    Path("ledger/anchors.json"), "--anchors", help="Journal des ancrages (versionné)."
+)
+
+
+def _git_state() -> dict[str, object]:
+    import subprocess
+
+    def git(*args: str) -> str:
+        try:
+            done = subprocess.run(["git", *args], capture_output=True, text=True, check=True)
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+        return done.stdout.strip()
+
+    return {
+        "commit": git("rev-parse", "HEAD") or None,
+        "dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+    }
+
+
+def _anchor_ledgers(paths: list[Path], env: Path, anchors_path: Path, public_key: Path) -> str:
+    """Vérifie puis ancre les registres sur Sepolia ; renvoie le lien Etherscan."""
+    from gold_agents.blockchain import anchor as anchoring
+    from gold_agents.blockchain.signing import load_public_key
+    from gold_agents.blockchain.storage import read_jsonl
+
+    key = load_public_key(public_key) if public_key.exists() else None
+    heads = []
+    for path in paths:
+        chain = read_jsonl(path)
+        result = chain.verify(key)
+        if not result.valid:
+            raise RuntimeError(f"{path} : {result.describe()}")
+        heads.append(anchoring.LedgerHead(path.as_posix(), len(chain), chain.head.hash))
+    values = anchoring.read_env(env)
+    typer.echo(
+        f"Ancrage sur Sepolia de {len(heads)} registre(s), empreinte "
+        f"{anchoring.anchor_digest(heads)[:16]}… (jusqu'à quelques minutes)"
+    )
+    done = anchoring.send_anchor(heads, values["SEPOLIA_RPC_URL"], values["SEPOLIA_PRIVATE_KEY"])
+    anchoring.append_anchor(done, anchors_path)
+    url = anchoring.etherscan_url(done.tx_hash)
+    typer.echo(f"Ancré dans le bloc {done.block_number} : {url}")
+    return url
+
+
+FINAL_OUT_OPTION = typer.Option(None, "--out", help="Dossier des résultats.")
+FINAL_LEDGER_OPTION = typer.Option(None, "--ledger-dir", help="Dossier des registres.")
+FROZEN_OPTION = typer.Option(
+    Path("outputs/ledger/reglages_figes.jsonl"), "--frozen", help="Registre des réglages figés."
+)
+
+
+@app.command()
+def evaluate(
+    config: Path = CONFIG_OPTION,
+    rehearsal: bool = typer.Option(
+        False, "--rehearsal", help="Répétition sur la validation : le test n'est pas lu."
+    ),
+    quick: bool = typer.Option(
+        False, "--quick", help="Avec --rehearsal : 1 graine, 5 époques (vérifie la chaîne)."
+    ),
+    models_dir: Path = MODELS_DIR_OPTION,
+    forecast_dir: Path = FORECAST_DIR_OPTION,
+    tuning_dir: Path = TUNING_DIR_OPTION,
+    frozen: Path = FROZEN_OPTION,
+    frozen_head: str = typer.Option(
+        "", "--frozen-head", help="Hash attendu du bloc genèse figé (défaut : celui du 30/10)."
+    ),
+    out_dir: Path | None = FINAL_OUT_OPTION,
+    ledger_dir: Path | None = FINAL_LEDGER_OPTION,
+    key: Path = PRIVATE_KEY_OPTION,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    env: Path = ENV_OPTION,
+    anchors_path: Path = ANCHORS_OPTION,
+    no_anchor: bool = typer.Option(False, "--no-anchor", help="Ne pas ancrer sur Sepolia."),
+    again: str = typer.Option(
+        "", "--again", help="Relancer un test déjà lancé : raison, inscrite dans le registre."
+    ),
+) -> None:
+    """Phase 8 : un seul run sur le test, toutes les stratégies, registres signés et ancrés."""
+    import json
+    import time
+
+    import pandas as pd
+
+    from gold_agents.blockchain.chain import Chain
+    from gold_agents.blockchain.storage import read_jsonl, write_jsonl
+    from gold_agents.data.prepare import FEATURES_FILE, load_prepared
+    from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation import final as fe
+    from gold_agents.evaluation.agents_report import FORECAST_FILE
+
+    cfg = load_config(config)
+    split = "val" if rehearsal else "test"
+    if quick and not rehearsal:
+        typer.echo("--quick n'existe qu'avec --rehearsal : le test se lance en entier.", err=True)
+        raise typer.Exit(code=1)
+    out = out_dir or Path(f"outputs/results/final_{split}")
+    ledgers = ledger_dir or Path(
+        "outputs/ledger/test" if not rehearsal else "outputs/ledger/final_val"
+    )
+    anchor = not (no_anchor or rehearsal)
+    title = (
+        "Phase 8 : évaluation finale sur le test"
+        if not rehearsal
+        else ("Phase 8, répétition sur la validation")
+    )
+
+    # 1. Contrôles, avant de lire le moindre prix de la période évaluée.
+    path = cfg.data.processed_dir / FEATURES_FILE
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `uv run gold-agents prepare`.", err=True)
+        raise typer.Exit(code=1)
+    missing = [p for p in (models_dir / "lstm", models_dir / "gru") if not p.exists()]
+    if missing or not (forecast_dir / FORECAST_FILE).exists():
+        typer.echo("Modèles de la phase 4 absents : lancer d'abord `uv run gold-agents train`.")
+        raise typer.Exit(code=1)
+    if cfg.tuning is None:
+        typer.echo("Section `tuning` absente de la configuration.", err=True)
+        raise typer.Exit(code=1)
+    data_sha = sha256_file(path)
+    check = fe.check_frozen(cfg, frozen, frozen_head or fe.FROZEN_HEAD, data_sha)
+    from gold_agents.models import walk_forward as wf
+
+    net_meta = wf.read_network_meta(models_dir)
+    lgbm_params = json.loads((forecast_dir / FORECAST_FILE).read_text("utf-8"))["settings"].get(
+        "b4"
+    )
+    procedure = fe.check_procedure(tuning_dir / "forecasts_meta.json", net_meta, lgbm_params)
+    if check.ok:
+        typer.echo(
+            f"Réglages figés vérifiés : bloc genèse {check.head[:16]}…, config et données "
+            "identiques au gel."
+        )
+    for problem in check.problems + procedure:
+        typer.echo(f"  {'REFUS' if not rehearsal else 'attention'} : {problem}", err=True)
+    blocking = check.problems + [p for p in procedure if "différents" in p]
+    if blocking and not rehearsal:
+        typer.echo("Le test n'est lancé qu'avec les réglages figés : rien n'a été lu.", err=True)
+        raise typer.Exit(code=1)
+    signer = _ledger_signer(key)
+    if signer is None and not rehearsal:
+        typer.echo("Le test exige des registres signés : `uv run gold-agents keygen`.", err=True)
+        raise typer.Exit(code=1)
+    if anchor:
+        from gold_agents.blockchain import anchor as anchoring
+
+        try:
+            anchoring.read_env(env)
+            import web3  # noqa: F401
+        except KeyError as exc:
+            typer.echo(f"{exc.args[0]} (ou --no-anchor).", err=True)
+            raise typer.Exit(code=1) from exc
+        except ImportError as exc:
+            typer.echo("web3 absent : `uv sync --all-extras` (ou --no-anchor).", err=True)
+            raise typer.Exit(code=1) from exc
+
+    # 2. Un seul run : un plan déjà écrit veut dire que le test a déjà été lancé.
+    plan_path = ledgers / fe.PLAN_FILE
+    previous: list[dict[str, object]] = []
+    if plan_path.exists() and not rehearsal:
+        old = read_jsonl(plan_path)
+        old_plan = old.blocks[0].events[0]
+        if not again:
+            typer.echo(
+                f"Le test a déjà été lancé (plan {old.head.hash[:16]}…, tentative "
+                f"{old_plan.get('attempt', 1)}). Le principe : un seul run. Pour relancer "
+                'quand même, --again "raison" ; la raison et l\'ancien plan sont inscrits '
+                "dans le nouveau registre.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        n = int(old_plan.get("attempt", 1))
+        kept = plan_path.with_name(f"plan_tentative{n}.jsonl")
+        plan_path.replace(kept)
+        previous = [
+            *old_plan.get("previous_attempts", []),
+            {
+                "plan": str(kept),
+                "head": old.head.hash,
+            },
+        ]
+
+    start_time = time.perf_counter()
+    frame, scaler = load_prepared(cfg.data.processed_dir)
+    start, end = fe.split_bounds(frame, cfg, split)
+    tc, mc = cfg.tuning, cfg.models
+    seeds = tc.seeds[:1] if quick else list(tc.seeds)
+    epochs = 5 if quick else mc.max_epochs
+    mc_samples = 10 if quick else mc.mc_samples
+    runs = 20 if quick else tc.random_runs
+    factors = list(tc.costs_factors)
+    plan = {
+        "type": "GENESIS",
+        "kind": "TEST_PLAN" if not rehearsal else "REHEARSAL_PLAN",
+        "attempt": len(previous) + 1,
+        "previous_attempts": previous,
+        "reason_again": again or None,
+        "planned_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "period": {"split": split, "start": str(start), "end": str(end)},
+        "frozen_settings": {"file": frozen.as_posix(), "head": check.head, "ok": check.ok},
+        "settings": fe.current_settings(cfg),
+        "config": json.loads(cfg.model_dump_json()),
+        "data_sha256": data_sha,
+        "code": _git_state(),
+        "procedure": {
+            "forecasts": "modèles réentraînés sur tout ce qui précède le début de la période "
+            "(walk-forward de la phase 6)",
+            "seeds": seeds,
+            "max_epochs": epochs,
+            "patience": mc.patience,
+            "mc_samples": mc_samples,
+            "early_stop_days": tc.early_stop_days,
+            "networks": {k: {"net": v["net"], "train": v["train"]} for k, v in net_meta.items()},
+            "lightgbm": lgbm_params,
+        },
+        "strategies": [
+            "buy_and_hold",
+            "sma_20_50",
+            "agents_lstm",
+            "agents_gru",
+            "agents_ensemble",
+            fe.MAIN,
+            "agents_lightgbm",
+            fe.RANDOM,
+            fe.ORACLE,
+        ],
+        "main_system": fe.MAIN,
+        "costs_factors": factors,
+        "random_runs": runs,
+        "alerts": {"direction": mc.direction_alert, "sharpe": fe.SHARPE_ALERT},
+        "anchored": anchor,
+        "quick": quick,
+    }
+    plan_chain = Chain.start([fe.clean_json(plan)], signer)
+    write_jsonl(plan_chain, plan_path)
+    typer.echo(f"Plan écrit avant de lire la période : {plan_path} ({plan_chain.head.hash[:16]}…)")
+    if anchor:
+        try:
+            _anchor_ledgers([plan_path, frozen], env, anchors_path, public_key)
+        except Exception as exc:
+            plan_path.unlink()  # rien n'a été lu : on peut réessayer proprement
+            typer.echo(f"Ancrage du plan impossible, rien n'a été lu : {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    # 3. Prévisions : modèles appris sur tout ce qui précède la période.
+    typer.echo(
+        f"\nPériode {split} : du {start} au {end}. Prévisions : LSTM + GRU "
+        f"({len(seeds)} graine(s)) et LightGBM réentraînés sur le passé (avant le {start})."
+    )
+    columns, window = list(scaler.columns), cfg.features.window
+    if mc.threads:
+        import torch
+
+        torch.set_num_threads(mc.threads)
+    forecasts, info = fe.final_forecasts(
+        frame,
+        columns,
+        window,
+        start,
+        end,
+        tc.early_stop_days,
+        net_meta,
+        lgbm_params,
+        seeds,
+        epochs,
+        mc.patience,
+        mc_samples,
+        mc.threads,
+    )
+    typer.echo(
+        f"  appris sur {info['n_fit']} jours (+{info['n_early_stop']} pour l'arrêt anticipé), "
+        f"{info['n_predicted']} jours prédits ({time.perf_counter() - start_time:.0f} s)"
+    )
+    tables = fe.tables_from(forecasts)
+    out.mkdir(parents=True, exist_ok=True)
+    forecasts.to_csv(out / "forecasts.csv", index=False)
+
+    # 4. Le run : toutes les stratégies, registres signés.
+    outcomes = fe.run_all(
+        cfg,
+        frame,
+        tables,
+        start,
+        end,
+        split,
+        data_sha,
+        plan_chain.head.hash,
+        out,
+        ledgers,
+        signer,
+        1.0,
+        cfg.seed,
+    )
+    costs = fe.costs_sensitivity(cfg, frame, tables, start, end, split, factors, cfg.seed)
+    refs, draws = fe.random_draws(cfg, outcomes, frame, runs, cfg.seed)
+    fc = fe.forecast_table(forecasts)
+    yearly = fe.yearly_returns(outcomes)
+    warnings = fe.alerts(outcomes, fc, mc.direction_alert)
+    table = fe.final_table(outcomes, refs, costs)
+
+    costs.to_csv(out / "costs.csv", index=False)
+    refs.to_csv(out / "random_references.csv", index=False)
+    draws.to_csv(out / "random_draws.csv", index=False)
+    fc.to_csv(out / "forecast_metrics.csv", index=False)
+    yearly.to_csv(out / "yearly_returns.csv")
+    table.to_csv(out / "final_table.csv")
+    (out / "final_table.md").write_text(
+        f"# {title}\n\nDu {outcomes[0].run.metrics['start']} au "
+        f"{outcomes[0].run.metrics['end']}, frais x1.\n\n"
+        + fe.markdown(table)
+        + "\n## Sensibilité aux frais (rendement total)\n\n"
+        + fe.markdown(fe.costs_text(costs))
+        + "\n## Précision des prévisions\n\n"
+        + fe.markdown(fe.forecast_text(fc))
+        + "\n## Rendement par année\n\n"
+        + fe.markdown(fe.yearly_text(yearly))
+        + "\n## Alertes « trop beau »\n\n"
+        + ("\n".join(f"- {w}" for w in warnings) if warnings else "Aucune.")
+        + "\n",
+        encoding="utf-8",
+    )
+    metrics = [o.run.metrics for o in outcomes]
+    (out / "metrics.json").write_text(
+        json.dumps(
+            fe.clean_json(
+                {
+                    "plan_head": plan_chain.head.hash,
+                    "info": info,
+                    "metrics": metrics,
+                    "alerts": warnings,
+                }
+            ),
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    fig1 = fe.final_figure(outcomes, table, cfg, title, out / f"final_{split}.png")
+    fig2 = fe.robustness_figure(
+        costs, refs, draws, fc, yearly, mc.direction_alert, title, out / f"robustesse_{split}.png"
+    )
+
+    # 5. Registre des résultats : tableaux, alertes et empreinte de chaque fichier.
+    files = sorted(p for p in out.iterdir() if p.is_file())
+    strategy_ledgers = [o.run.ledger_path for o in outcomes]
+    result_events = [
+        {
+            "type": "GENESIS",
+            "kind": "TEST_RESULTS" if not rehearsal else "REHEARSAL_RESULTS",
+            "plan_head": plan_chain.head.hash,
+            "ledgers": [
+                {"file": p.as_posix(), "head": read_jsonl(p).head.hash} for p in strategy_ledgers
+            ],
+            "files_sha256": fe.file_digests(files),
+            "forecast_info": info,
+        },
+        {"type": "METRICS", "metrics": metrics},
+        {"type": "COSTS_SENSITIVITY", "rows": fe.records(costs)},
+        {"type": "RANDOM_REFERENCES", "rows": fe.records(refs)},
+        {"type": "FORECAST_METRICS", "rows": fe.records(fc)},
+        {"type": "ALERTS", "alerts": warnings},
+    ]
+    results_path = write_jsonl(
+        Chain.start(fe.clean_json(json.loads(json.dumps(result_events, default=str))), signer),
+        ledgers / fe.RESULTS_FILE,
+    )
+
+    pd.set_option("display.width", 220)
+    pd.set_option("display.max_columns", 30)
+    typer.echo("\nPrévisions sur la période (bonne direction > 60 % : alerte) :")
+    typer.echo(fe.forecast_text(fc).to_string())
+    typer.echo(f"Part de jours en hausse : {fc['share_up'].iloc[0]:.1%}")
+    typer.echo("\nTableau comparatif (frais x1) :")
+    typer.echo(table.T.to_string())
+    typer.echo("\nSensibilité aux frais (rendement total) :")
+    typer.echo(fe.costs_text(costs).to_string())
+    typer.echo("\nRendement par année :")
+    typer.echo(fe.yearly_text(yearly).to_string())
+    typer.echo("\nTrades par règle de l'agent de risque :")
+    for o in outcomes:
+        if o.decisions is not None:
+            rules = ", ".join(f"{k} {v}" for k, v in o.run.metrics["rules"].items())
+            typer.echo(f"  {fe.LABELS.get(o.run.result.strategy, '')[:32]:32s} {rules}")
+    typer.echo("\nAlertes « trop beau » :")
+    typer.echo("\n".join(f"  ALERTE : {w}" for w in warnings) if warnings else "  aucune")
+
+    all_ledgers = [plan_path, *strategy_ledgers, results_path]
+    key_pub = signer.public_key if signer else None
+    typer.echo("\nRegistres :")
+    ok = True
+    for p in all_ledgers:
+        v = read_jsonl(p).verify(key_pub)
+        ok &= v.valid
+        typer.echo(f"  {p} : {v.describe()}")
+    if anchor:
+        try:
+            _anchor_ledgers(all_ledgers, env, anchors_path, public_key)
+        except Exception as exc:
+            typer.echo(
+                f"Ancrage final impossible ({exc}). Relancer : uv run gold-agents anchor "
+                f"{' '.join(p.as_posix() for p in all_ledgers)}",
+                err=True,
+            )
+            ok = False
+    typer.echo(
+        f"\nSchémas : {fig1}  {fig2}\nRésultats : {out}  Registres : {ledgers}  "
+        f"({time.perf_counter() - start_time:.0f} s)"
+    )
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -787,12 +1196,6 @@ def verify(
         typer.echo(f"{path} : {result.describe()}")
     if not ok:
         raise typer.Exit(code=1)
-
-
-ENV_OPTION = typer.Option(Path(".env"), "--env", help="Fichier .env du portefeuille de test.")
-ANCHORS_OPTION = typer.Option(
-    Path("ledger/anchors.json"), "--anchors", help="Journal des ancrages (versionné)."
-)
 
 
 @app.command()

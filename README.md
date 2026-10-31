@@ -18,7 +18,9 @@ Phase 5 (agents) : `gold-agents simulate` fait trader les quatre agents (prévis
 
 Phase 6 (réglage) : `gold-agents tune` règle les seuils et le risque des agents sur une grille grossière, en walk-forward sur 2011-2021 (modèles réentraînés sur le passé de chaque période), avec la sensibilité aux frais et les références hasard et oracle ; `gold-agents freeze` scelle le réglage retenu dans un bloc genèse.
 
-Phase 7 (blockchain v2) : chaque bloc porte la racine de Merkle de ses événements, une petite preuve de travail et une signature Ed25519 (`gold-agents keygen` crée la clé ; la clé privée reste dans `keys/`, jamais versionnée). `scripts/verify_ledger.py` vérifie les registres sans le projet (Python + `cryptography`). Les modules des phases suivantes sont encore des squelettes.
+Phase 7 (blockchain v2) : chaque bloc porte la racine de Merkle de ses événements, une petite preuve de travail et une signature Ed25519 (`gold-agents keygen` crée la clé ; la clé privée reste dans `keys/`, jamais versionnée). `scripts/verify_ledger.py` vérifie les registres sans le projet (Python + `cryptography`).
+
+Phase 8 (évaluation finale) : `gold-agents evaluate` fait **un seul run** sur le test (2022 à la fin des données) avec les réglages figés : toutes les stratégies, métriques financières et de prévision, sensibilité aux frais, alerte « trop beau », registres signés et ancrés sur Sepolia avant et après le run.
 
 ## Installation
 
@@ -202,6 +204,24 @@ uv run scripts/verify_ledger.py outputs/ledger/agents_val --anchors ledger/ancho
 - `verify_ledger.py --anchors` relit la transaction avec un nœud public (sans portefeuille ni web3) et vérifie que chaque registre ancré a le même dernier hash qu'au moment de l'ancrage.
 - Pour le professeur : sur Etherscan, « View input as UTF-8 » montre l'empreinte ; la date est celle du bloc.
 
+## Évaluation finale sur le test (phase 8)
+
+```bash
+uv sync --all-extras                                   # PyTorch, LightGBM, web3
+uv run gold-agents evaluate --rehearsal --quick        # répétition rapide sur la validation (le test n'est pas lu)
+uv run gold-agents evaluate                            # LE run sur le test (une seule fois)
+uv run scripts/verify_ledger.py outputs/ledger/test --anchors ledger/anchors.json
+```
+
+- **Rien n'est réglé** : avant de lire le moindre prix du test, `evaluate` relit `outputs/ledger/reglages_figes.jsonl` et refuse si son bloc genèse n'est pas `ca1c3fd2…60c9`, si un réglage ou un paramètre de `config.yaml` a changé depuis le gel, si le fichier de features n'est plus le même (SHA-256), ou si les hyperparamètres des modèles diffèrent de ceux de `tune`.
+- **Prévisions** : exactement la procédure du walk-forward de la phase 6, avec une période de plus. LSTM, GRU (3 graines, MC Dropout) et LightGBM sont réentraînés sur 2004-2021 (la dernière année sert à l'arrêt anticipé), puis prédisent chaque jour du test avec sa seule fenêtre de 30 jours.
+- **Stratégies**, toutes dans le même moteur, du 1er jour du test au dernier : Buy & Hold, SMA 20/50, Agents + LSTM, + GRU, + LSTM/GRU, + LSTM/GRU avec confiance (le système retenu en phase 6), + LightGBM, une stratégie au hasard (même nombre de trades que le système retenu) et l'oracle (connaît le futur, plafond pour illustration).
+- **Mesures** : profit net, rendement, CAGR, Sharpe, Sortino, perte max, trades, taux de réussite, frais, exposition ; MAE, RMSE, bonne direction, gain sur B0 et Diebold-Mariano des prévisions ; rendement par année ; 200 stratégies au hasard par système d'agents ; frais × 0, 1, 2, 5 pour toutes les stratégies.
+- **Alerte « trop beau »** : plus de 60 % de bonnes directions, un Sharpe au-dessus de 3, ou des agents meilleurs que l'oracle. C'est presque toujours une fuite du futur.
+- **Un seul run, prouvé** : `evaluate` écrit d'abord `outputs/ledger/test/plan.jsonl` (réglages figés, config, empreinte des données, commit Git, procédure) et l'**ancre sur Sepolia avant de lire le test**. Puis chaque stratégie a son registre signé, et `resultats.jsonl` scelle les tableaux, les alertes et le SHA-256 de chaque fichier de résultats. Le tout est ancré à nouveau. Un second `evaluate` est refusé ; `--again "raison"` le permet, mais garde l'ancien plan et inscrit la raison et le numéro de tentative dans le nouveau.
+- **Prérequis** : la clé privée du registre (`keys/`, sinon refus), `.env` avec le portefeuille Sepolia (sinon `--no-anchor`, inscrit dans le plan).
+- **Sorties** : `outputs/results/final_test/` (`final_table.md` et `.csv` pour le rapport, `metrics.json`, `costs.csv`, `forecast_metrics.csv`, `yearly_returns.csv`, `random_references.csv`, courbes, trades et décisions, figures `final_test.png` et `robustesse_test.png`) et `outputs/ledger/test/*.jsonl`. À versionner après le run : `ledger/anchors.json` et `outputs/ledger/test/`.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -222,7 +242,7 @@ uv run scripts/verify_ledger.py outputs/ledger/agents_val --anchors ledger/ancho
 | `make simulate` | Agents (prévision, stratégie, risque, exécution) contre Buy & Hold sur la validation |
 | `make tune` | Réglage des agents en walk-forward : grille, frais, hasard, oracle, schéma |
 | `make freeze` | Scelle les réglages de la config dans un bloc genèse (après `tune`) |
-| `make evaluate` | Métriques et figures |
+| `make evaluate` | Phase 8 : le run unique sur le test, tableau final, figures, registres ancrés |
 | `make keygen` | Paire de clés Ed25519 du registre (une seule fois) |
 | `make verify` | Vérification des registres de `outputs/ledger/` (signatures avec `ledger/public_key.pem`) |
 | `make verify-ledger` | Script autonome `scripts/verify_ledger.py` sur `ledger/` |

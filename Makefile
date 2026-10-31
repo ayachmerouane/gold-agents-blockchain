@@ -60,7 +60,7 @@ tune:             ## Réglage des agents en walk-forward (grille, frais, hasard,
 freeze:           ## Scelle les réglages de la config dans un bloc genèse (après tune)
 	uv run gold-agents freeze
 
-evaluate:
+evaluate:         ## Phase 8 : un seul run sur le test (réglages figés), tableau final, figures, ancrage
 	uv run gold-agents evaluate
 
 keygen:           ## Paire de clés Ed25519 du registre (clé privée dans keys/, jamais versionnée)
