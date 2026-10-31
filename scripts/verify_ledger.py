@@ -40,7 +40,13 @@ from typing import Any
 GENESIS_PREV_HASH = "0" * 64
 DEFAULT_DIRS = (Path("ledger"), Path("outputs/ledger"))
 DEFAULT_PUBLIC_KEY = Path("ledger/public_key.pem")
-DEFAULT_RPC = "https://ethereum-sepolia-rpc.publicnode.com"
+# Nœuds Sepolia publics et gratuits, essayés dans l'ordre (lecture seule, sans compte).
+DEFAULT_RPCS = (
+    "https://ethereum-sepolia-rpc.publicnode.com",
+    "https://sepolia.drpc.org",
+    "https://1rpc.io/sepolia",
+    "https://rpc.sepolia.org",
+)
 SEPOLIA_CHAIN_ID = 11155111
 PAYLOAD_PREFIX = "gold-agents ledger sha256:"
 
@@ -144,9 +150,9 @@ def verify_blocks(blocks: list[dict[str, Any]], public_key: Any) -> tuple[int, s
 
 def rpc_call(url: str, method: str, params: list[Any]) -> Any:
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-    request = urllib.request.Request(
-        url, body.encode("utf-8"), {"Content-Type": "application/json"}
-    )
+    # Sans User-Agent explicite, certains nœuds (Cloudflare) répondent 403 à urllib.
+    headers = {"Content-Type": "application/json", "User-Agent": "gold-agents-verify-ledger/1.0"}
+    request = urllib.request.Request(url, body.encode("utf-8"), headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         answer = json.loads(response.read())
     if "error" in answer:
@@ -215,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         "--strict", action="store_true", help="refuser les registres v1 ou non signés"
     )
     parser.add_argument("--anchors", type=Path, help="ancrages Sepolia (ledger/anchors.json)")
-    parser.add_argument("--rpc", default=DEFAULT_RPC, help="nœud RPC Sepolia (lecture seule)")
+    parser.add_argument("--rpc", help="nœud RPC Sepolia (défaut : plusieurs nœuds publics)")
     args = parser.parse_args(argv)
     # Sous Windows, une sortie redirigée prend l'encodage cp1252 : on force l'UTF-8.
     if isinstance(sys.stdout, io.TextIOWrapper):
@@ -275,10 +281,20 @@ def main(argv: list[str] | None = None) -> int:
                 detail += f", ancré (transaction {found[0]['tx_hash'][:12]}…)"
         print(f"valide    {path} : {len(blocks)} blocs, {detail}, dernier hash {head}")
     for tx_hash, anchor in used.items():
-        try:
-            print(f"ancrage   {tx_hash} : {check_anchor(anchor, args.rpc)}")
-        except (OSError, ValueError, KeyError) as exc:
-            print(f"INVALIDE  ancrage {tx_hash} : {exc}")
+        errors = []
+        for rpc in [args.rpc] if args.rpc else DEFAULT_RPCS:
+            try:
+                print(f"ancrage   {tx_hash} : {check_anchor(anchor, rpc)}")
+                break
+            except (ValueError, KeyError) as exc:  # le nœud a répondu : l'ancrage est faux
+                print(f"INVALIDE  ancrage {tx_hash} : {exc}")
+                ok = False
+                break
+            except OSError as exc:  # nœud injoignable ou refus : on essaie le suivant
+                errors.append(f"{rpc} ({exc})")
+        else:
+            print(f"NON VÉRIFIÉ ancrage {tx_hash} : aucun nœud joignable : {'; '.join(errors)}")
+            print("  Essayer --rpc <URL Sepolia>, par exemple celle de votre fichier .env.")
             ok = False
     print("\nRésultat : tous les registres sont valides." if ok else "\nRésultat : ÉCHEC.")
     return 0 if ok else 1

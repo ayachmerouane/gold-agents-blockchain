@@ -139,3 +139,50 @@ def test_anchor_command_needs_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     args = ["anchor", str(DEMO), "--public-key", str(DEMO_KEY), "--env", str(tmp_path / ".env")]
     res = CliRunner().invoke(app, args)
     assert res.exit_code == 1 and "SEPOLIA_RPC_URL" in res.output
+
+
+def test_script_tries_other_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = _load_script()
+    anchors, tx = _anchor_demo(tmp_path)
+    good = _fake_rpc(tx)
+
+    def first_refuses(url: str, method: str, params: list[Any]) -> Any:
+        if url == script.DEFAULT_RPCS[0]:
+            raise OSError("HTTP Error 403: Forbidden")
+        return good(url, method, params)
+
+    monkeypatch.setattr(script, "rpc_call", first_refuses)
+    code, out = _main(script, anchors, capsys)
+    assert code == 0 and "bloc Sepolia 123" in out
+
+    def all_refuse(url: str, method: str, params: list[Any]) -> Any:
+        raise OSError("HTTP Error 403: Forbidden")
+
+    monkeypatch.setattr(script, "rpc_call", all_refuse)
+    code, out = _main(script, anchors, capsys)
+    assert code == 1 and "NON VÉRIFIÉ" in out and "--rpc" in out
+
+
+def test_rpc_call_sends_a_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = _load_script()
+    seen = {}
+
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"jsonrpc": "2.0", "id": 1, "result": "0xaa36a7"}'
+
+    def urlopen(request: Any, timeout: float) -> Response:
+        seen["agent"] = request.get_header("User-agent")
+        return Response()
+
+    monkeypatch.setattr(script.urllib.request, "urlopen", urlopen)
+    assert script.rpc_call("https://rpc", "eth_chainId", []) == "0xaa36a7"
+    assert seen["agent"] and "urllib" not in seen["agent"].lower()
