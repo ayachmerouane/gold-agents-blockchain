@@ -66,7 +66,8 @@ def _run(*args: str | Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        cwd=ROOT,
+        # Pas à la racine : le script y lirait ledger/public_key.pem, la vraie clé de l'auteur.
+        cwd=Path(__file__).parent,
         check=False,
     )
 
