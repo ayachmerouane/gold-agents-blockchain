@@ -329,6 +329,8 @@ Elle garantit l'**intégrité** et l'**antériorité** des décisions enregistr�
 | **Blockchain** | Explorateur de blocs, bouton « Vérifier l'intégrité », démo de falsification (modifier une copie → la vérification échoue). |
 | **Expériences** | Tableau des runs MLflow, hyperparamètres retenus. |
 
+**Réalisé en phase 9 :** navigation Streamlit (`st.navigation`) avec une page par onglet dans `dashboard/pages/`, et toute la lecture des fichiers dans `src/gold_agents/dashboard/data.py` (sans Streamlit, testée). Les registres du test contiennent chaque jour la prévision, le signal, l'ordre, le trade et le portefeuille : le tableau de bord se construit à partir d'eux seuls, sur un simple clone. Les CSV de `outputs/results/` et la base MLflow, non versionnés, ne servent qu'en complément. La démo de falsification modifie une copie en mémoire selon trois niveaux (valeur modifiée, bloc re-haché, chaîne réécrite avec une autre clé) ; l'onglet d'ancrage recalcule l'empreinte publiée sur Sepolia à partir des registres présents.
+
 ---
 
 ## 10. Stratégie de tests
@@ -565,3 +567,4 @@ Après le jalon S8 (évaluation finale prix seuls), dans le temps restant avant 
 | 2026-10-29 | 1.3 | ayach (avec Claude) | Phase 5 réalisée : 4 agents + orchestrateur (`gold-agents simulate`) sur la validation. Seuils θ mis à 0 (signe de la prévision) en attendant leur réglage en phase 6 ; filtre de confiance MC Dropout `r̂/σ̂ > k` (k = 0,5) à l'achat seulement ; le drawdown max coupe le trading jusqu'à la fin de la période ; LightGBM, non sauvegardé en phase 4, est réentraîné avec ses réglages Optuna. |
 | 2026-10-30 | 1.4 | ayach (avec Claude) | Phase 7 réalisée : blocs v2 (racine de Merkle, preuve de travail de difficulté 3, signature Ed25519 sur le hash d'en-tête), clé privée locale (`gold-agents keygen`), `scripts/verify_ledger.py` autonome, tests de falsification. Pas d'heure réelle dans les blocs (rejeu identique) ; registres v1 toujours vérifiables. |
 | 2026-10-31 | 1.5 | ayach (avec Claude) | Bonus C de la phase 7 : `gold-agents anchor` publie sur Sepolia (0 ETH vers soi-même) l'empreinte des derniers hash des registres, journal `ledger/anchors.json` ; `verify_ledger.py --anchors` relit la transaction avec un nœud public, sans web3. |
+| 2026-10-31 | 1.6 | ayach (avec Claude) | Phase 9 réalisée : tableau de bord Streamlit + Plotly à 6 pages, lu uniquement depuis les registres (et les résultats facultatifs), vérification, falsification et contrôle des ancrages dans l'interface. |

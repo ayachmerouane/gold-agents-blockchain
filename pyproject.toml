@@ -34,7 +34,7 @@ anchor = [
     "web3>=7",
 ]
 dashboard = [
-    "streamlit>=1.33",
+    "streamlit>=1.50",
     "plotly>=5.20",
 ]
 dev = [

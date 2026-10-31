@@ -222,6 +222,17 @@ uv run scripts/verify_ledger.py outputs/ledger/test --anchors ledger/anchors.jso
 - **Prérequis** : la clé privée du registre (`keys/`, sinon refus), `.env` avec le portefeuille Sepolia (sinon `--no-anchor`, inscrit dans le plan).
 - **Sorties** : `outputs/results/final_test/` (`final_table.md` et `.csv` pour le rapport, `metrics.json`, `costs.csv`, `forecast_metrics.csv`, `yearly_returns.csv`, `random_references.csv`, courbes, trades et décisions, figures `final_test.png` et `robustesse_test.png`) et `outputs/ledger/test/*.jsonl`. À versionner après le run : `ledger/anchors.json` et `outputs/ledger/test/`.
 
+## Tableau de bord (phase 9)
+
+```bash
+uv sync --extra dev --extra dashboard     # Streamlit et Plotly (une fois)
+make dashboard                            # puis ouvrir http://localhost:8501
+```
+
+- **Ne calcule rien** : il lit les registres de `outputs/ledger/<période>/` (versionnés pour le test : un simple clone suffit), `ledger/` (clé publique, ancrages) et, s'ils existent, `outputs/results/` et `mlruns/mlflow.db`. La période (test final, validation…) se choisit dans la barre latérale.
+- **Six pages** : *Vue d'ensemble* (indicateurs du système choisi, tableau comparatif, robustesse aux frais, comparaison au hasard), *Prévisions* (prix et rendement réels contre prévus, bande d'incertitude, MAE/RMSE contre B0), *Portefeuille* (valeur, drawdown, exposition), *Décisions* (achats et ventes sur le prix, règle de l'agent risque, journal filtrable et exportable), *Blockchain* (explorateur de blocs, vérification de tous les registres, démo de falsification sur une copie en mémoire, état des ancrages Sepolia avec lien Etherscan), *Expériences* (réglages figés, hyperparamètres retenus, runs MLflow, figures).
+- La logique de lecture est dans `src/gold_agents/dashboard/data.py` (testée sans Streamlit) ; `dashboard/` ne fait qu'afficher.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -247,7 +258,7 @@ uv run scripts/verify_ledger.py outputs/ledger/test --anchors ledger/anchors.jso
 | `make verify` | Vérification des registres de `outputs/ledger/` (signatures avec `ledger/public_key.pem`) |
 | `make verify-ledger` | Script autonome `scripts/verify_ledger.py` sur `ledger/` |
 | `make anchor` | Bonus : ancre le dernier hash des registres sur Sepolia (`.env` requis) |
-| `make dashboard` | Tableau de bord Streamlit |
+| `make dashboard` | Tableau de bord Streamlit (6 pages, http://localhost:8501) |
 | `make all` | Chaîne complète |
 
 La CLI est aussi accessible directement : `uv run gold-agents --help`.
