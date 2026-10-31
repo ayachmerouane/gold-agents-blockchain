@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -71,6 +71,9 @@ verify:           ## Vérifie les registres de outputs/ledger/ (signatures avec 
 
 verify-ledger:    ## Script autonome du professeur sur ledger/ (Python + cryptography seulement)
 	uv run scripts/verify_ledger.py
+
+anchor:           ## Bonus : ancre le dernier hash des registres sur Sepolia (.env et extra anchor requis)
+	uv run --extra anchor gold-agents anchor
 
 dashboard:
 	uv run streamlit run dashboard/app.py

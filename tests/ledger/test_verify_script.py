@@ -87,6 +87,8 @@ def test_script_does_not_import_the_project() -> None:
         "argparse",
         "hashlib",
         "io",
+        "urllib",
+        "datetime",
         "json",
         "sys",
         "pathlib",

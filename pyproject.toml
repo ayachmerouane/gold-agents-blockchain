@@ -30,6 +30,9 @@ eda = [
 fetch = [
     "yfinance>=0.2.48",
 ]
+anchor = [
+    "web3>=7",
+]
 dashboard = [
     "streamlit>=1.33",
     "plotly>=5.20",
@@ -81,5 +84,5 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["statsmodels.*", "scipy.*", "sklearn.*", "lightgbm.*", "optuna.*", "mlflow.*"]
+module = ["statsmodels.*", "scipy.*", "sklearn.*", "lightgbm.*", "optuna.*", "mlflow.*", "web3.*"]
 ignore_missing_imports = true
