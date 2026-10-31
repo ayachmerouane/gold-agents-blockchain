@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from common import (
     DEFAULT_COMPARE,
+    GOLD,
     color,
     date_range,
     header,
@@ -80,19 +81,25 @@ for name in picked:
     invested = (f["qty"] * close.reindex(f.index)).fillna(0) / f["value"]
     rows.append(invested.rename(name))
 expo = pd.concat(rows, axis=1).loc[lo:hi]
-fig = go.Figure()
-for name in picked:
-    fig.add_trace(
-        go.Scatter(
-            x=expo.index,
-            y=expo[name],
-            name=data.label(name),
-            line={"color": color(name), "width": 2, "shape": "hv"},
-            hovertemplate="%{y:.0%}",
-        )
+fig = go.Figure(
+    go.Heatmap(
+        z=expo[picked].T.to_numpy(),
+        x=expo.index,
+        y=[data.label(n) for n in picked],
+        colorscale=[[0, "#131C2E"], [1, GOLD]],
+        zmin=0,
+        zmax=1,
+        ygap=6,
+        showscale=False,
+        hovertemplate="%{y}<br>%{x|%d/%m/%Y} : %{z:.0%} investi<extra></extra>",
     )
-fig.update_yaxes(range=[-0.05, 1.05])
-st.plotly_chart(plot_layout(fig, height=300, y_format=".0%"), width="stretch")
+)
+fig.update_layout(
+    title="En or (doré) ou en liquidités (sombre), jour par jour", hovermode="closest"
+)
+plot_layout(fig, height=80 + 46 * len(picked))
+fig.update_yaxes(autorange="reversed", showgrid=False)
+st.plotly_chart(fig, width="stretch")
 summary = pd.DataFrame(
     {
         "Stratégie": [data.label(n) for n in picked],

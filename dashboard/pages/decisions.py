@@ -10,6 +10,7 @@ from common import (
     SELL_COLOR,
     date_range,
     header,
+    kpis,
     plot_layout,
     require_period,
     section,
@@ -34,12 +35,15 @@ trades = period.trades[strategy]
 close = period.close.loc[lo:hi]
 
 in_range = frame[(frame["date"] >= lo) & (frame["date"] <= hi)]
-c = st.columns(4)
-c[0].metric("Achats", int((in_range["action"] == "BUY").sum()), border=True)
-c[1].metric("Ventes", int((in_range["action"] == "SELL").sum()), border=True)
-c[2].metric("Jours en attente", int((in_range["action"] == "HOLD").sum()), border=True)
 refused = int((in_range["approved"] == False).sum()) if "approved" in in_range else 0  # noqa: E712
-c[3].metric("Ordres refusés par le risque", refused, border=True)
+kpis(
+    [
+        ("Achats", str(int((in_range["action"] == "BUY").sum())), "ordres exécutés", ""),
+        ("Ventes", str(int((in_range["action"] == "SELL").sum())), "ordres exécutés", ""),
+        ("Jours en attente", str(int((in_range["action"] == "HOLD").sum())), "aucun ordre", ""),
+        ("Ordres refusés", str(refused), "par l'agent risque", "down" if refused else ""),
+    ]
+)
 
 fig = go.Figure()
 fig.add_trace(
@@ -47,7 +51,7 @@ fig.add_trace(
         x=close.index,
         y=close,
         name="Clôture de l'or",
-        line={"color": "#52514e", "width": 1.5},
+        line={"color": "#AEB6C6", "width": 1.5},
         hovertemplate="%{y:,.2f} $",
     )
 )
@@ -68,7 +72,7 @@ if len(trades):
                     "symbol": symbol,
                     "size": 12,
                     "color": col,
-                    "line": {"width": 1.5, "color": "white"},
+                    "line": {"width": 1.5, "color": "#0B1220"},
                 },
                 customdata=t[["reason", "qty", "fees"]].to_numpy(),
                 hovertemplate=f"<b>{name}</b> à %{{y:,.2f}} $<br>%{{customdata[0]}}<br>"

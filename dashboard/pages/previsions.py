@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from common import color, date_range, header, plot_layout, require_period, section
+from common import color, date_range, header, kpis, plot_layout, require_period, section
 
 from gold_agents.dashboard import data
 
@@ -151,21 +151,26 @@ fig.update_layout(title="Rendement réel et rendement prévu, jour par jour", ba
 st.plotly_chart(plot_layout(fig, y_title="Rendement log", y_format=".1%"), width="stretch")
 
 ok = view.dropna(subset=["target"])
-c = st.columns(4)
-c[0].metric(
-    "Bonne direction",
-    f"{np.mean(np.sign(ok['r_hat']) == np.sign(ok['target'])):.1%}",
-    help="Part des jours où le signe de r̂ est celui du rendement réel.",
-    border=True,
+direction = float(np.mean(np.sign(ok["r_hat"]) == np.sign(ok["target"])))
+share_up = float(np.mean(ok["target"] > 0))
+kpis(
+    [
+        (
+            "Bonne direction",
+            f"{direction:.1%}".replace(".", ","),
+            "jours où le signe est juste",
+            "up" if direction > share_up else "down",
+        ),
+        (
+            "Référence « toujours hausse »",
+            f"{share_up:.1%}".replace(".", ","),
+            "score obtenu sans modèle",
+            "",
+        ),
+        ("Rendement prévu moyen", f"{ok['r_hat'].mean():+.3%}".replace(".", ","), "par jour", ""),
+        ("Rendement réel moyen", f"{ok['target'].mean():+.3%}".replace(".", ","), "par jour", ""),
+    ]
 )
-c[1].metric(
-    "Jours en hausse",
-    f"{np.mean(ok['target'] > 0):.1%}",
-    help="Référence : toujours prévoir « hausse » donne ce score de direction.",
-    border=True,
-)
-c[2].metric("Rendement prévu moyen", f"{ok['r_hat'].mean():+.3%}", border=True)
-c[3].metric("Rendement réel moyen", f"{ok['target'].mean():+.3%}", border=True)
 
 # --- Tableau par modèle -------------------------------------------------------------------
 section("Erreurs par modèle sur toute la période")

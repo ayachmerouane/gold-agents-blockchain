@@ -1,4 +1,4 @@
-"""Vue d'ensemble : KPI du système choisi et comparaison avec les références."""
+"""Vue d'ensemble : indicateurs du système choisi, courbes, risque/rendement, années."""
 
 from __future__ import annotations
 
@@ -6,16 +6,22 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from common import (
+    DEFAULT_COMPARE,
+    GOLD,
+    MUTED,
     color,
     header,
+    kpis,
     metrics_display,
     plot_layout,
     require_period,
     section,
     strategy_picker,
+    tone,
 )
 
 from gold_agents.dashboard import data
+from gold_agents.evaluation import financial_metrics as fm
 
 period = require_period()
 frames = period.frames
@@ -32,79 +38,194 @@ table = period.metrics.set_index("strategy")
 left, right = st.columns([2, 3], vertical_alignment="bottom")
 with left:
     chosen = strategy_picker(period, "overview_strategy", "Système analysé")
-if plan and plan.get("main_system") in table.index:
+if plan.get("main_system") in table.index:
     right.caption(
-        f"Système principal annoncé avant le test : **{data.label(plan['main_system'])}**. "
-        f"Plan scellé le {plan.get('planned_at', '?')[:10]}, tentative n° "
-        f"{plan.get('attempt', '?')}."
+        f"Système principal annoncé avant le test : **{data.label(plan['main_system'])}** "
+        f"(plan scellé le {plan.get('planned_at', '?')[:10]})."
     )
 row = table.loc[chosen]
 ref = table.loc["buy_and_hold"] if "buy_and_hold" in table.index else None
 
 
-def delta(col: str, pct: bool = True) -> str | None:
+def vs_ref(col: str, pct: bool = True) -> tuple[str, str]:
     if ref is None or chosen == "buy_and_hold":
-        return None
+        return "", ""
     d = float(row[col] - ref[col])
-    text = f"{d * 100:+.1f} pts" if pct else f"{d:+.2f}"
-    return text.replace(".", ",")
+    text = f"{d * 100:+.1f} pts vs Buy & Hold" if pct else f"{d:+.2f} vs Buy & Hold"
+    return text.replace(".", ","), tone(d)
 
 
-c = st.columns(6)
-c[0].metric("Profit net", data.fmt_money(row["net_profit"]), border=True)
-c[1].metric("Rendement", data.fmt_pct(row["total_return"]), delta("total_return"), border=True)
-c[2].metric("Ratio de Sharpe", data.fmt_num(row["sharpe"]), delta("sharpe", False), border=True)
-c[3].metric(
-    "Perte maximale",
-    data.fmt_pct(row["max_drawdown"], signed=False),
-    delta("max_drawdown"),
-    help="Plus grande baisse depuis un plus haut. Plus proche de 0 = mieux.",
-    border=True,
+ret_sub, ret_tone = vs_ref("total_return")
+sh_sub, sh_tone = vs_ref("sharpe", pct=False)
+dd_sub, dd_tone = vs_ref("max_drawdown")
+kpis(
+    [
+        (
+            "Valeur finale",
+            data.fmt_money(row["final_value"]),
+            f"profit net {data.fmt_money(row['net_profit'])}",
+            tone(row["net_profit"]),
+        ),
+        ("Rendement total", data.fmt_pct(row["total_return"]), ret_sub, ret_tone),
+        ("Rendement annuel", data.fmt_pct(row["cagr"]), "composé, sur la période", ""),
+        ("Ratio de Sharpe", data.fmt_num(row["sharpe"]), sh_sub, sh_tone),
+        ("Perte maximale", data.fmt_pct(row["max_drawdown"], signed=False), dd_sub, dd_tone),
+        (
+            "Transactions",
+            f"{int(row['n_trades'])}",
+            f"investi {row['exposure'] * 100:.0f} % du temps",
+            "",
+        ),
+    ],
+    accent=0,
 )
-c[4].metric("Transactions", int(row["n_trades"]), border=True)
-c[5].metric("Temps investi", f"{row['exposure'] * 100:.0f} %", border=True)
 
 idle = [s for s in table.index if s.startswith("agents") and table.loc[s, "n_trades"] == 0]
-if idle:
+if chosen in idle:
     st.info(
-        "Aucune position prise sur la période par : "
-        + ", ".join(data.label(s) for s in idle)
-        + ". Leurs prévisions sont restées sous le seuil d'achat ou trop incertaines ; "
-        "le détail est sur la page Décisions.",
+        f"{data.label(chosen)} n'a pris aucune position : ses prévisions sont restées sous le "
+        "seuil d'achat ou trop incertaines. Le détail jour par jour est sur la page Décisions.",
         icon=":material/info:",
     )
-if ref is not None and chosen != "buy_and_hold":
-    st.caption("Les écarts sous les indicateurs sont mesurés par rapport au Buy & Hold.")
 for alert in period.results.get("alerts") or []:
     st.warning(alert, icon=":material/warning:")
 
-section("Comparaison des stratégies")
-st.dataframe(metrics_display(period.metrics), hide_index=True, width="stretch")
+# --- Courbes de valeur --------------------------------------------------------------------
+section("Performance comparée")
+shown = [s for s in DEFAULT_COMPARE if s in frames]
+if chosen not in shown:
+    shown.append(chosen)
+fig = go.Figure()
+for name in shown:
+    f = frames[name]
+    is_main = name == chosen
+    fig.add_trace(
+        go.Scatter(
+            x=f["date"],
+            y=f["value"],
+            name=data.label(name),
+            line={"color": color(name), "width": 3 if is_main else 1.8},
+            hovertemplate="%{y:,.0f} $",
+        )
+    )
+fig.add_hline(y=float(first["value"].iloc[0]), line={"color": MUTED, "dash": "dot", "width": 1})
+fig.update_layout(title="Valeur du portefeuille (10 000 $ investis au départ)")
+plot_layout(fig, height=430, y_title="USD")
+fig.update_yaxes(tickformat=",.0f")
+st.plotly_chart(fig, width="stretch")
 
-left, right = st.columns([3, 1], vertical_alignment="bottom")
-show_oracle = right.toggle(
-    "Inclure l'oracle",
-    value=False,
-    help="L'oracle connaît le futur : c'est un plafond théorique, pas une stratégie possible.",
+# --- Risque / rendement et rendements -----------------------------------------------------
+left, right = st.columns(2)
+fig = go.Figure()
+for name in period.strategies:
+    if name == "oracle":
+        continue
+    values = frames[name]["value"].astype("float64").reset_index(drop=True)
+    fig.add_trace(
+        go.Scatter(
+            x=[fm.annual_volatility(values)],
+            y=[float(table.loc[name, "cagr"])],
+            mode="markers+text" if float(table.loc[name, "n_trades"]) > 0 else "markers",
+            name=data.label(name),
+            text=[data.label(name)],
+            textposition="top center",
+            textfont={"color": MUTED, "size": 11},
+            marker={
+                "size": 18 if name == chosen else 12,
+                "color": color(name),
+                "line": {"width": 2, "color": GOLD if name == chosen else "#0B1220"},
+            },
+            hovertemplate="volatilité %{x:.1%}<br>rendement annuel %{y:.1%}"
+            "<extra>%{fullData.name}</extra>",
+            showlegend=False,
+        )
+    )
+idle_all = [s for s in period.strategies if s != "oracle" and table.loc[s, "n_trades"] == 0]
+if idle_all:
+    fig.add_annotation(
+        x=0,
+        y=0,
+        text=f"{len(idle_all)} systèmes restés en liquidités",
+        showarrow=True,
+        arrowcolor=MUTED,
+        ax=70,
+        ay=-30,
+        font={"color": MUTED, "size": 11},
+    )
+fig.update_layout(title="Risque et rendement annuels", hovermode="closest")
+plot_layout(fig, height=400, y_title="Rendement annuel", y_format=".0%")
+fig.update_xaxes(
+    title_text="Volatilité annuelle", tickformat=".0%", showgrid=True, title_font={"color": MUTED}
 )
-plot = period.metrics[(period.metrics["strategy"] != "oracle") | show_oracle].iloc[::-1]
+left.plotly_chart(fig, width="stretch")
+
+bars = period.metrics[period.metrics["strategy"] != "oracle"].sort_values("total_return")
 fig = go.Figure(
     go.Bar(
-        x=plot["total_return"],
-        y=plot["strategy"].map(data.label),
+        x=bars["total_return"],
+        y=bars["strategy"].map(data.label),
         orientation="h",
-        marker={"color": [color(s) for s in plot["strategy"]], "cornerradius": 4},
-        text=plot["total_return"].map(data.fmt_pct),
+        marker={
+            "color": [color(s) for s in bars["strategy"]],
+            "cornerradius": 4,
+            "line": {"width": [2 if s == chosen else 0 for s in bars["strategy"]], "color": GOLD},
+        },
+        text=bars["total_return"].map(data.fmt_pct),
         textposition="outside",
+        textfont={"color": MUTED},
         cliponaxis=False,
         hovertemplate="%{y} : %{x:.1%}<extra></extra>",
     )
 )
-fig.update_layout(title="Rendement total sur la période", showlegend=False, hovermode="closest")
-plot_layout(fig, height=70 + 40 * len(plot))
-fig.update_xaxes(tickformat=".0%", title_text="")
-st.plotly_chart(fig, width="stretch")
+fig.update_layout(title="Rendement total par stratégie", showlegend=False, hovermode="closest")
+plot_layout(fig, height=400)
+fig.update_xaxes(
+    tickformat=".0%", showgrid=True, range=[0, float(bars["total_return"].max()) * 1.25]
+)
+right.plotly_chart(fig, width="stretch")
 
+# --- Rendements annuels -------------------------------------------------------------------
+yearly = {}
+for name in period.strategies:
+    if name == "oracle":
+        continue
+    f = frames[name].set_index("date")["value"].astype("float64")
+    year_end = f.groupby(f.index.year).last()
+    start = year_end.shift(1).fillna(float(f.iloc[0]))
+    yearly[data.label(name)] = year_end / start - 1
+heat = pd.DataFrame(yearly).T
+if heat.shape[1] > 1:
+    limit = float(heat.abs().max().max()) or 1.0
+    fig = go.Figure(
+        go.Heatmap(
+            z=heat.to_numpy(),
+            x=[str(y) for y in heat.columns],
+            y=list(heat.index),
+            colorscale=[[0, "#e5484d"], [0.5, "#1B2438"], [1, "#2fb344"]],
+            zmin=-limit,
+            zmax=limit,
+            text=[[data.fmt_pct(v, 0) for v in r] for r in heat.to_numpy()],
+            texttemplate="%{text}",
+            textfont={"color": "#E6E9EF", "size": 12},
+            xgap=3,
+            ygap=3,
+            showscale=False,
+            hovertemplate="%{y}, %{x} : %{z:.1%}<extra></extra>",
+        )
+    )
+    fig.update_layout(title="Rendement par année civile", hovermode="closest")
+    plot_layout(fig, height=70 + 42 * len(heat))
+    fig.update_yaxes(autorange="reversed", showgrid=False)
+    st.plotly_chart(fig, width="stretch")
+
+# --- Tableau ------------------------------------------------------------------------------
+section("Tableau comparatif")
+st.dataframe(metrics_display(period.metrics), hide_index=True, width="stretch")
+st.caption(
+    "L'oracle connaît le prix du lendemain : c'est un plafond théorique, exclu des graphiques."
+)
+
+# --- Robustesse ---------------------------------------------------------------------------
 costs = period.results.get("costs_sensitivity")
 refs = period.results.get("random_references")
 if costs or refs:
@@ -124,14 +245,13 @@ if costs:
                     mode="lines+markers",
                     line={"color": color(str(name)), "width": 2},
                     marker={"size": 8},
-                    hovertemplate="frais ×%{x} : %{y:.1%}<extra>"
-                    + data.label(str(name))
-                    + "</extra>",
+                    hovertemplate="frais ×%{x} : %{y:.1%}<extra>%{fullData.name}</extra>",
                 )
             )
         fig.update_layout(title="Rendement si les frais étaient multipliés", hovermode="closest")
         plot_layout(fig, height=400, y_title="Rendement total", y_format=".0%")
         fig.update_xaxes(title_text="Multiplicateur des frais et du glissement", dtick=1)
+        fig.update_layout(legend={"y": -0.28}, margin={"b": 30})
         st.plotly_chart(fig, width="stretch")
 if refs:
     with tab_random:

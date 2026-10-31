@@ -23,17 +23,17 @@ MLFLOW_DB = ROOT / "mlruns" / "mlflow.db"
 # Couleur fixe par stratégie (palette catégorielle validée, dans l'ordre) : une stratégie
 # garde sa couleur quelle que soit la sélection. L'oracle, simple illustration, est gris.
 COLORS = {
-    "buy_and_hold": "#2a78d6",
-    "sma_20_50": "#eb6834",
-    "agents_lstm": "#1baf7a",
-    "agents_gru": "#eda100",
-    "agents_ensemble": "#e87ba4",
-    "agents_ensemble_mc": "#008300",
-    "agents_lightgbm": "#6250d6",
-    "aleatoire": "#e34948",
-    "oracle": "#8a8984",
+    "buy_and_hold": "#3987e5",
+    "sma_20_50": "#d95926",
+    "agents_lstm": "#199e70",
+    "agents_gru": "#D4AF37",
+    "agents_ensemble": "#d55181",
+    "agents_ensemble_mc": "#2fb344",
+    "agents_lightgbm": "#9085e9",
+    "aleatoire": "#e66767",
+    "oracle": "#7c8599",
 }
-BUY_COLOR, SELL_COLOR = "#0f8a3c", "#c62f2f"
+BUY_COLOR, SELL_COLOR = "#2fb344", "#e5484d"
 DEFAULT_COMPARE = ("buy_and_hold", "sma_20_50", "agents_gru", "agents_ensemble_mc")
 
 
@@ -114,17 +114,38 @@ def require_period() -> Period:
 
 
 GOLD = "#C9A227"
+GOLD = "#D4AF37"
+INK, MUTED, GRID = "#E6E9EF", "#8B95A9", "rgba(139,149,169,0.14)"
 STYLE = """
 <style>
-.block-container {padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1280px;}
-h1 {font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0 !important;}
-h2, h3 {font-weight: 600; letter-spacing: -0.01em;}
-.ga-subtitle {color: rgba(128,128,128,0.95); font-size: 0.98rem; margin: 0.15rem 0 1.4rem;}
-.ga-section {font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
-             text-transform: uppercase; color: rgba(128,128,128,0.95); margin: 1.6rem 0 0.4rem;}
-[data-testid="stMetricValue"] {font-size: 1.7rem; font-weight: 600;}
-[data-testid="stMetricLabel"] p {font-size: 0.82rem; color: rgba(128,128,128,0.95);}
-code {white-space: nowrap;}
+.block-container {padding-top: 2rem; padding-bottom: 3rem; max-width: 1320px;}
+h1 {font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0 !important;
+    font-size: 2.1rem !important;}
+h2, h3, h4 {font-weight: 600; letter-spacing: -0.01em;}
+.ga-subtitle {color: #8B95A9; font-size: 0.98rem; margin: 0.1rem 0 1.5rem;}
+.ga-section {font-size: 0.76rem; font-weight: 700; letter-spacing: 0.12em;
+             text-transform: uppercase; color: #D4AF37; margin: 1.8rem 0 0.6rem;}
+.ga-kpis {display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+          gap: 14px; margin: 0.4rem 0 1rem;}
+.ga-kpi {background: linear-gradient(160deg, #16213A 0%, #111A2D 100%);
+         border: 1px solid #24304A; border-radius: 12px; padding: 16px 18px;}
+.ga-kpi .lbl {font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase;
+              color: #8B95A9;}
+.ga-kpi .val {font-size: 1.6rem; font-weight: 700; color: #E6E9EF; margin-top: 4px;
+              font-variant-numeric: tabular-nums;}
+.ga-kpi .sub {font-size: 0.8rem; margin-top: 2px; color: #8B95A9;}
+.ga-kpi .up {color: #2fb344;} .ga-kpi .down {color: #e5484d;}
+.ga-kpi.accent {border-color: rgba(212,175,55,0.55);}
+.ga-kpi.accent .val {color: #D4AF37;}
+.ga-chain {display: flex; align-items: center; gap: 0; overflow-x: auto; padding: 6px 0 12px;}
+.ga-block {min-width: 150px; background: #131C2E; border: 1px solid #24304A;
+           border-radius: 10px; padding: 10px 12px;}
+.ga-block.current {border-color: #D4AF37; box-shadow: 0 0 0 1px rgba(212,175,55,0.35);}
+.ga-block .n {font-size: 0.72rem; color: #8B95A9; letter-spacing: 0.05em;}
+.ga-block .d {font-size: 0.95rem; font-weight: 600; color: #E6E9EF;}
+.ga-block .e {font-size: 0.75rem; color: #8B95A9; margin-top: 2px;}
+.ga-block .ok {font-size: 0.72rem; color: #2fb344; margin-top: 4px;}
+.ga-link {color: #D4AF37; font-size: 1.1rem; padding: 0 6px;}
 footer {visibility: hidden;}
 </style>
 """
@@ -189,18 +210,56 @@ def date_range(period: Period, key: str) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def plot_layout(fig: Any, height: int = 420, y_title: str = "", y_format: str = "") -> Any:
-    """Mise en page commune : survol unifié, légende au-dessus, grille discrète."""
+    """Mise en page commune : fond transparent, grille discrète, légende sous le graphique."""
     fig.update_layout(
         height=height,
-        margin={"l": 10, "r": 10, "t": 50, "b": 10},
+        template="plotly_dark",
+        separators=", ",  # décimales à la virgule, milliers à l'espace
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Source Sans Pro, sans-serif", "color": INK, "size": 13},
+        margin={"l": 8, "r": 8, "t": 48, "b": 8},
         hovermode="x unified",
-        title={"x": 0, "xanchor": "left", "y": 0.98, "yanchor": "top"},
-        # Légende sous le graphique : elle ne chevauche jamais le titre.
-        legend={"orientation": "h", "yanchor": "top", "y": -0.08, "x": 0},
+        hoverlabel={"bgcolor": "#131C2E", "bordercolor": "#24304A", "font": {"color": INK}},
+        title={
+            "x": 0,
+            "xanchor": "left",
+            "y": 0.97,
+            "yanchor": "top",
+            "font": {"size": 15, "color": INK},
+        },
+        legend={"orientation": "h", "yanchor": "top", "y": -0.1, "x": 0, "font": {"color": MUTED}},
     )
-    fig.update_yaxes(title_text=y_title, tickformat=y_format, gridcolor="rgba(128,128,128,0.15)")
-    fig.update_xaxes(gridcolor="rgba(128,128,128,0.08)")
+    fig.update_yaxes(
+        title_text=y_title,
+        tickformat=y_format,
+        gridcolor=GRID,
+        zeroline=False,
+        tickfont={"color": MUTED},
+        title_font={"color": MUTED},
+    )
+    fig.update_xaxes(gridcolor=GRID, showgrid=False, tickfont={"color": MUTED}, linecolor="#24304A")
     return fig
+
+
+def kpis(cards: list[tuple[str, str, str, str]], accent: int | None = None) -> None:
+    """Rangée de cartes : (libellé, valeur, sous-texte, sens « up »/« down »/« »)."""
+    html = []
+    for i, (lbl, val, sub, tone) in enumerate(cards):
+        cls = "ga-kpi accent" if i == accent else "ga-kpi"
+        sub_html = f'<div class="sub {tone}">{sub}</div>' if sub else ""
+        html.append(
+            f'<div class="{cls}"><div class="lbl">{lbl}</div><div class="val">{val}</div>'
+            f"{sub_html}</div>"
+        )
+    style = f"grid-template-columns: repeat({len(cards)}, minmax(0, 1fr));"
+    st.markdown(
+        f'<div class="ga-kpis" style="{style}">{"".join(html)}</div>', unsafe_allow_html=True
+    )
+
+
+def tone(x: float) -> str:
+    return "up" if x > 0 else "down" if x < 0 else ""
 
 
 def metrics_display(table: pd.DataFrame) -> pd.DataFrame:

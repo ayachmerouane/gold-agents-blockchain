@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import streamlit as st
-from common import PUBLIC_KEY, ROOT, blocks, header, require_period, section, verify
+from common import PUBLIC_KEY, ROOT, blocks, header, kpis, require_period, section, verify
 
 from gold_agents.dashboard import data
 
@@ -18,17 +20,27 @@ files = sorted(period.run.ledger_dir.glob("*.jsonl"), key=lambda p: data.strateg
 strategy_files = [p for p in files if p.stem not in data.SPECIAL_LEDGERS]
 n_blocks = sum(len(blocks(p)) for p in files)
 anchors = data.anchor_checks(ROOT)
-fp = data.key_fingerprint(PUBLIC_KEY)
-
-c = st.columns(4)
-c[0].metric("Registres", len(files), border=True)
-c[1].metric("Blocs enregistrés", f"{n_blocks:,}".replace(",", " "), border=True)
-c[2].metric("Ancrages Ethereum", len(anchors), border=True)
-c[3].metric(
-    "Clé de signature",
-    fp[:8] if fp else "absente",
-    help="Empreinte de la clé publique Ed25519 qui vérifie les signatures.",
-    border=True,
+checks = [verify(p) for p in files]
+intact = all(v["valid"] for v in checks)
+conform = [a for a in anchors if a["status"] == "conforme"]
+kpis(
+    [
+        (
+            "Intégrité",
+            "Intacte" if intact else "Altérée",
+            "toutes les signatures vérifiées" if intact else "voir l'onglet Vérifier",
+            "up" if intact else "down",
+        ),
+        ("Registres", str(len(files)), "un par stratégie, plus le plan et les résultats", ""),
+        ("Blocs enregistrés", f"{n_blocks:,}".replace(",", " "), "un bloc par jour simulé", ""),
+        (
+            "Ancrages Ethereum",
+            str(len(anchors)),
+            f"{len(conform)} conforme(s) aux registres présents",
+            "up" if conform else "",
+        ),
+    ],
+    accent=0,
 )
 
 
@@ -54,30 +66,35 @@ with tab_explore:
     index = int(right.number_input(f"Bloc (0 à {n - 1})", 0, n - 1, min(1, n - 1), key="explore_i"))
     block = chain[index]
     when = block.get("sim_date") or "bloc genèse"
-    st.markdown(f"#### Bloc {block['index']} · {when}")
 
-    with st.container(border=True):
-        c = st.columns(3)
-        c[0].caption("Hash du bloc précédent")
-        c[0].code(block["prev_hash"][:24] + "…", language=None)
-        c[1].caption("Hash de ce bloc")
-        c[1].code(block["hash"][:24] + "…", language=None)
-        c[2].caption("Repris par le bloc suivant")
-        c[2].code(
-            chain[index + 1]["prev_hash"][:24] + "…" if index + 1 < n else "dernier bloc",
-            language=None,
+    def short(b: dict[str, Any]) -> str:
+        kinds = [str(e.get("type")) for e in b["events"]]
+        if "TRADE" in kinds:
+            return "Exécution d'un ordre"
+        for e in b["events"]:
+            if e.get("type") in ("ORDER", "DECISION"):
+                return data.action_label(str(e.get("action")))
+        return data.EVENT_LABELS.get(kinds[0], "Bloc") if kinds else "Bloc"
+
+    lo = max(0, min(index - 2, n - 5))
+    cards = []
+    for b in chain[lo : lo + 5]:
+        cls = "ga-block current" if b["index"] == index else "ga-block"
+        cards.append(
+            f'<div class="{cls}"><div class="n">BLOC {b["index"]}</div>'
+            f'<div class="d">{b.get("sim_date") or "Genèse"}</div>'
+            f'<div class="e">{short(b)}</div><div class="ok">● scellé et signé</div></div>'
         )
-        c = st.columns(4)
-        c[0].caption("Racine de Merkle")
-        c[0].markdown(f"`{str(block.get('merkle_root', '–'))[:16]}…`")
-        c[1].caption("Preuve de travail")
-        c[1].markdown(f"{block.get('difficulty', '–')} zéros · nonce {block.get('nonce', '–')}")
-        c[2].caption("Signature Ed25519")
-        c[2].markdown(f"`{(block.get('signature') or '–')[8:24]}…`")
-        c[3].caption("Événements")
-        c[3].markdown(str(len(block["events"])))
+    st.markdown(
+        '<div class="ga-chain">' + '<span class="ga-link">→</span>'.join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Chaque bloc contient l'empreinte du précédent : modifier un ancien bloc casse tous "
+        "les liens qui suivent."
+    )
 
-    section("Contenu du bloc")
+    section(f"Contenu du bloc {block['index']} · {when}")
     events = pd.DataFrame(
         [
             {
@@ -88,26 +105,22 @@ with tab_explore:
         ]
     )
     st.dataframe(events, hide_index=True, width="stretch")
-    with st.expander("Données brutes du bloc"):
-        st.json(block["events"], expanded=1 if index == 0 else 2)
-
-    section("Blocs voisins")
-    lo = max(0, index - 5)
-    near = pd.DataFrame(
-        [
-            {
-                "Bloc": b["index"],
-                "Date": b.get("sim_date") or "genèse",
-                "Contenu": ", ".join(
-                    data.EVENT_LABELS.get(str(e.get("type")), "?") for e in b["events"]
+    with st.expander("Détails techniques du bloc"):
+        tech = pd.DataFrame(
+            [
+                ("Empreinte du bloc précédent", block["prev_hash"]),
+                ("Empreinte de ce bloc", block["hash"]),
+                ("Racine de Merkle des événements", block.get("merkle_root", "–")),
+                (
+                    "Preuve de travail",
+                    f"{block.get('difficulty', '–')} zéros en tête, nonce {block.get('nonce')}",
                 ),
-                "Hash précédent": b["prev_hash"][:14] + "…",
-                "Hash": b["hash"][:14] + "…",
-            }
-            for b in chain[lo : lo + 11]
-        ]
-    )
-    st.dataframe(near, hide_index=True, width="stretch")
+                ("Signature Ed25519", (block.get("signature") or "–")[:48] + "…"),
+            ],
+            columns=["Champ", "Valeur"],
+        )
+        st.dataframe(tech, hide_index=True, width="stretch")
+        st.json(block["events"], expanded=1 if index == 0 else 2)
 
 # --- Vérification -------------------------------------------------------------------------
 with tab_verify:
@@ -251,13 +264,13 @@ with tab_anchor:
             right.link_button("Etherscan", a["url"], icon=":material/open_in_new:", width="stretch")
             files_table = a["files"].copy()
             files_table["fichier"] = files_table["fichier"].map(data.ledger_file_label)
-            files_table["hash de tête ancré"] = files_table["hash de tête ancré"].str[:16] + "…"
+            files_table = files_table.drop(columns=["hash de tête ancré"])
             files_table["état"] = (
                 files_table["état"]
                 .map({"identique": "Identique", "DIFFÉRENT": "Différent"})
                 .fillna("Non présent")
             )
-            files_table.columns = ["Registre", "Blocs", "Hash de tête ancré", "État"]
+            files_table.columns = ["Registre", "Blocs", "État"]
             with st.expander(f"{len(files_table)} registre(s) couverts", expanded=ok):
                 st.dataframe(files_table, hide_index=True, width="stretch")
     st.caption(

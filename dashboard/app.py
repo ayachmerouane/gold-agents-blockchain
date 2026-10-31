@@ -45,10 +45,3 @@ with st.sidebar:
         st.selectbox("Période", names, format_func=titles.get, key="period")
 
 nav.run()
-
-with st.sidebar:
-    st.caption(
-        "Investissement simulé sur l'or (XAU/USD) : Deep Learning, agents autonomes et "
-        "registre blockchain. Toutes les données "
-        "affichées proviennent du registre signé : rien n'est recalculé."
-    )
