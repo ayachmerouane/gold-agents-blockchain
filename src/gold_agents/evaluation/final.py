@@ -159,8 +159,10 @@ def check_frozen(
             problems.append(f"réglage {key} : config {now!r}, figé {frozen!r}")
     current = json.loads(cfg.model_dump_json())
     frozen_cfg = dict(genesis.get("config", {}))
-    current.pop("data", None)
-    frozen_cfg.pop("data", None)
+    # Les chemins et la simulation en direct (ajoutée après le test) ne sont pas figés.
+    for section in ("data", "live"):
+        current.pop(section, None)
+        frozen_cfg.pop(section, None)
     problems += _config_diff(current, frozen_cfg)
     if genesis.get("data_sha256") != data_sha256:
         problems.append(

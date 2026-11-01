@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -16,6 +17,7 @@ from gold_agents.data.load import read_kaggle_csv, read_update_csv
 
 if TYPE_CHECKING:
     from gold_agents.blockchain.signing import Signer
+    from gold_agents.config import Config
 
 app = typer.Typer(help="Investissement simulé sur l'or : DL, agents et blockchain.")
 
@@ -80,7 +82,11 @@ def update_data(
     force: bool = typer.Option(False, "--force", help="Ajouter même si le contrôle échoue."),
 ) -> None:
     """Ajoute les jours manquants depuis la fin du CSV Kaggle (fichier séparé)."""
-    cfg = load_config(config)
+    _update(load_config(config), source, overlap_days, force)
+
+
+def _update(cfg: Config, source: UpdateSource, overlap_days: int = 60, force: bool = False) -> None:
+    """Ajoute les jours clôturés manquants (Twelve Data ou yfinance) ; Exit en cas d'échec."""
     if not cfg.data.raw_path.exists():
         typer.echo(f"{cfg.data.raw_path} absent : lancer d'abord `make download`.", err=True)
         raise typer.Exit(code=1)
@@ -1332,6 +1338,294 @@ def anchor(
     path = anchoring.append_anchor(done, anchors_path)
     typer.echo(f"Ancré dans le bloc {done.block_number} : {anchoring.etherscan_url(done.tx_hash)}")
     typer.echo(f"Ancrage ajouté à {path} (à versionner).")
+
+
+# --- Simulation en direct (paper trading) ---------------------------------------------
+
+LIVE_LEDGER_OPTION = typer.Option(
+    Path("outputs/ledger/live"), "--ledger-dir", help="Dossier du registre en direct."
+)
+LIVE_MODELS_OPTION = typer.Option(
+    Path("outputs/models/live"), "--live-models", help="Modèles figés de la simulation en direct."
+)
+
+
+def _rule_text(s: dict[str, object]) -> str:
+    if s.get("buy_rule") == "quantile":
+        return (
+            f"achat si r̂ dépasse le quantile {s['theta_buy']:.0%} des "
+            f"{s['quantile_window']} prévisions précédentes, vente si r̂ < -{s['theta_sell']:g}"
+        )
+    return f"achat si r̂ > {s['theta_buy']:g}, vente si r̂ < -{s['theta_sell']:g}"
+
+
+def _live_signer(key: Path) -> Signer:
+    signer = _ledger_signer(key)
+    if signer is None:
+        typer.echo("La simulation en direct exige un registre signé.", err=True)
+        raise typer.Exit(code=1)
+    return signer
+
+
+def _check_anchor_env(env: Path) -> None:
+    from gold_agents.blockchain import anchor as anchoring
+
+    try:
+        anchoring.read_env(env)
+        import web3  # noqa: F401
+    except KeyError as exc:
+        typer.echo(f"{exc.args[0]} (ou --no-anchor).", err=True)
+        raise typer.Exit(code=1) from exc
+    except ImportError as exc:
+        typer.echo("web3 absent : `uv sync --all-extras` (ou --no-anchor).", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _live_report(reports: Sequence[object]) -> None:
+    from gold_agents.live.session import DayReport
+
+    labels = {"BUY": "ACHAT", "SELL": "VENTE", "HOLD": "attente"}
+    for r in reports:
+        assert isinstance(r, DayReport)
+        done = f", exécuté : {r.trade.side} à {r.trade.price:,.2f}" if r.trade else ""
+        seuil = "" if r.threshold is None else f" (seuil d'achat {r.threshold:+.3%})"
+        r_hat = "pas de prévision" if r.r_hat is None else f"r̂ {r.r_hat:+.3%}{seuil}"
+        action = labels.get(r.order.action.value, r.order.action.value)
+        if not r.order.executable:
+            action = "attente"
+        typer.echo(
+            f"  {r.day} {'à temps   ' if r.on_time else 'EN RETARD '} {r_hat} -> {action} "
+            f"({r.order.rule}){done}. Valeur {r.value:,.0f} $, Buy & Hold {r.bh_value:,.0f} $"
+        )
+
+
+def _save_live(
+    chain: object,
+    path: Path,
+    public_key: Path,
+    anchor: bool,
+    env: Path,
+    anchors_path: Path,
+) -> None:
+    from gold_agents.blockchain.chain import Chain
+    from gold_agents.blockchain.signing import load_public_key
+    from gold_agents.blockchain.storage import read_jsonl, write_jsonl
+
+    assert isinstance(chain, Chain)
+    write_jsonl(chain, path)
+    key = load_public_key(public_key) if public_key.exists() else None
+    result = read_jsonl(path).verify(key)
+    typer.echo(f"Registre {path} : {result.describe()}.")
+    if not result.valid:
+        raise typer.Exit(code=1)
+    if not anchor:
+        typer.echo("Pas d'ancrage Sepolia (--no-anchor).")
+        return
+    try:
+        _anchor_ledgers([path], env, anchors_path, public_key)
+    except Exception as exc:
+        typer.echo(
+            f"Ancrage impossible ({exc}). Le registre est écrit : relancer l'ancrage avec "
+            f"`uv run gold-agents anchor {path.as_posix()}` avant la prochaine clôture.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("live-init")
+def live_init(
+    config: Path = CONFIG_OPTION,
+    source: UpdateSource = SOURCE_OPTION,
+    no_update: bool = typer.Option(False, "--no-update", help="Ne pas appeler l'API avant."),
+    models_dir: Path = MODELS_DIR_OPTION,
+    live_models: Path = LIVE_MODELS_OPTION,
+    ledger_dir: Path = LIVE_LEDGER_OPTION,
+    frozen: Path = FROZEN_OPTION,
+    key: Path = PRIVATE_KEY_OPTION,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    env: Path = ENV_OPTION,
+    anchors_path: Path = ANCHORS_OPTION,
+    no_anchor: bool = typer.Option(False, "--no-anchor", help="Ne pas ancrer sur Sepolia."),
+    quick: bool = typer.Option(False, "--quick", help="1 graine, 5 époques (vérifie la chaîne)."),
+    again: str = typer.Option(
+        "", "--again", help="Repartir de zéro : raison, inscrite dans le nouveau registre."
+    ),
+) -> None:
+    """Démarre la simulation en direct : modèles figés, plan signé et ancré, premier jour."""
+    import time
+
+    from gold_agents.blockchain.chain import Chain
+    from gold_agents.blockchain.storage import read_jsonl
+    from gold_agents.config import LiveConfig
+    from gold_agents.evaluation.final import current_settings
+    from gold_agents.live import session as ls
+    from gold_agents.models import walk_forward as wf
+
+    cfg = load_config(config)
+    live = cfg.live or LiveConfig()
+    if quick:
+        live = live.model_copy(update={"seeds": live.seeds[:1]})
+    path = ledger_dir / ls.LEDGER_FILE
+    previous: list[dict[str, object]] = []
+    if path.exists():
+        if not again:
+            typer.echo(
+                f"La simulation en direct a déjà démarré ({path}). Chaque jour : "
+                '`uv run gold-agents live`. Pour repartir de zéro : --again "raison".',
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        old = read_jsonl(path)
+        n = len(list(ledger_dir.glob("agents_live_tentative*.jsonl"))) + 1
+        kept = path.with_name(f"agents_live_tentative{n}.jsonl")
+        path.replace(kept)
+        previous = [{"ledger": kept.as_posix(), "head": old.head.hash, "blocks": len(old)}]
+    if not all((models_dir / k / "model.json").exists() for k in ls.KINDS):
+        typer.echo("Hyperparamètres de la phase 4 absents : `uv run gold-agents train`.", err=True)
+        raise typer.Exit(code=1)
+    signer = _live_signer(key)
+    anchor = not no_anchor
+    if anchor:
+        _check_anchor_env(env)
+    # Une seule règle gelée : celle du dernier `freeze`, la même que pour le test.
+    if not frozen.exists():
+        typer.echo(f"{frozen} absent : `uv run gold-agents freeze` d'abord.", err=True)
+        raise typer.Exit(code=1)
+    frozen_chain = read_jsonl(frozen)
+    frozen_head = frozen_chain.head.hash
+    frozen_settings = dict(frozen_chain.blocks[0].events[0].get("settings", {}))
+    diff = {
+        k: (v, frozen_settings.get(k))
+        for k, v in current_settings(cfg).items()
+        if frozen_settings.get(k) != v
+    }
+    if diff:
+        for k, (now, then) in diff.items():
+            typer.echo(f"  REFUS : {k} vaut {now!r} dans la config, {then!r} au gel.", err=True)
+        typer.echo("La règle de la config n'est pas celle du dernier gel : rien n'a démarré.")
+        raise typer.Exit(code=1)
+
+    if not no_update:
+        _update(cfg, source)
+    frame = ls.live_frame(cfg)
+    last = frame["date"].iloc[-1].date()
+    typer.echo(
+        f"\nDonnées jusqu'au {last} ({len(frame)} jours). Entraînement des modèles figés : "
+        f"LSTM + GRU, {len(live.seeds)} graine(s), sur tout ce qui précède."
+    )
+    start = time.perf_counter()
+    if live_models.exists():
+        import shutil
+
+        shutil.rmtree(live_models)
+    training = ls.train_models(
+        frame,
+        cfg,
+        live,
+        wf.read_network_meta(models_dir),
+        live_models,
+        5 if quick else cfg.models.max_epochs,
+        cfg.models.patience,
+        log=typer.echo,
+    )
+    typer.echo(f"Modèles figés dans {live_models} ({time.perf_counter() - start:.0f} s).")
+    models = ls.load_models(live_models, cfg.features.window)
+    now = datetime.now(UTC)
+    event, state = ls.plan_event(
+        cfg,
+        live,
+        {"file": frozen.as_posix(), "settings": frozen_settings},
+        frame,
+        models,
+        live_models,
+        training,
+        _git_state(),
+        frozen_head,
+        now,
+    )
+    event.update(previous_attempts=previous, reason_again=again or None, quick=quick)
+    chain = Chain.start([event, state.event()], signer)
+    s = event["settings"]
+    typer.echo(
+        f"Plan scellé avec la règle du gel {frozen_head[:12]}… : {_rule_text(s)}, "
+        f"stop-loss -{s['stop_loss']:.0%}, drawdown max -{s['max_drawdown']:.0%}, "
+        f"capital {s['initial_capital']:,.0f} $."
+    )
+    reports = ls.advance(chain, frame, models, now)
+    typer.echo("\nPremier jour :")
+    _live_report(reports)
+    _save_live(chain, path, public_key, anchor, env, anchors_path)
+    typer.echo(
+        "\nChaque jour de cotation, après minuit UTC (1 h ou 2 h du matin à Paris) : "
+        "`uv run gold-agents live`. Tableau de bord : page « Simulation en direct »."
+    )
+
+
+@app.command()
+def live(
+    config: Path = CONFIG_OPTION,
+    source: UpdateSource = SOURCE_OPTION,
+    no_update: bool = typer.Option(False, "--no-update", help="Ne pas appeler l'API avant."),
+    live_models: Path = LIVE_MODELS_OPTION,
+    ledger_dir: Path = LIVE_LEDGER_OPTION,
+    key: Path = PRIVATE_KEY_OPTION,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    env: Path = ENV_OPTION,
+    anchors_path: Path = ANCHORS_OPTION,
+    no_anchor: bool = typer.Option(False, "--no-anchor", help="Ne pas ancrer sur Sepolia."),
+) -> None:
+    """Simulation en direct : ajoute les nouveaux jours de cotation au registre, signe, ancre."""
+    from gold_agents.blockchain.signing import load_public_key
+    from gold_agents.blockchain.storage import read_jsonl
+    from gold_agents.live import session as ls
+
+    cfg = load_config(config)
+    path = ledger_dir / ls.LEDGER_FILE
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `uv run gold-agents live-init`.", err=True)
+        raise typer.Exit(code=1)
+    chain = read_jsonl(path)
+    pub = load_public_key(public_key) if public_key.exists() else None
+    check = chain.verify(pub)
+    if not check.valid:
+        typer.echo(f"Registre en direct refusé : {check.describe()}", err=True)
+        raise typer.Exit(code=1)
+    plan = ls.genesis(chain)
+    problems = ls.check_models(live_models, plan["models"]["files"])
+    if problems:
+        for p in problems:
+            typer.echo(f"  REFUS : {p}", err=True)
+        typer.echo("Les modèles ne sont plus ceux scellés dans le plan : rien n'est décidé.")
+        raise typer.Exit(code=1)
+    chain.signer = _live_signer(key)
+    anchor = not no_anchor
+    if anchor:
+        _check_anchor_env(env)
+    if not no_update:
+        _update(cfg, source)
+    frame = ls.live_frame(cfg)
+    for day in ls.revised_bars(chain, frame):
+        typer.echo(
+            f"  Note : la barre du {day} a été révisée par l'API ; le registre garde l'ancienne."
+        )
+    models = ls.load_models(live_models, int(plan["settings"]["window"]))
+    before = len(chain)
+    reports = ls.advance(chain, frame, models)
+    state = ls.last_state(chain)
+    if not reports:
+        typer.echo(
+            f"Aucun nouveau jour de cotation depuis le {state.last_date} (la barre du jour "
+            "n'est prise qu'une fois close, après minuit UTC). Rien à ajouter."
+        )
+        return
+    typer.echo(f"{len(reports)} jour(s) ajouté(s) (blocs {before} à {len(chain) - 1}) :")
+    _live_report(reports)
+    late = sum(not r.on_time for r in reports)
+    if late:
+        typer.echo(
+            f"  {late} jour(s) rattrapé(s) : décisions marquées « en retard » dans le registre."
+        )
+    _save_live(chain, path, public_key, anchor, env, anchors_path)
 
 
 if __name__ == "__main__":

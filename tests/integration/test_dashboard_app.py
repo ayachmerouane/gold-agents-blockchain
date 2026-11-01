@@ -1,4 +1,4 @@
-"""Les six pages du tableau de bord s'affichent sans erreur sur les registres du test."""
+"""Les sept pages du tableau de bord s'affichent sans erreur sur les registres du test."""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ st_testing = pytest.importorskip("streamlit.testing.v1", reason="extra dashboard
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "dashboard" / "app.py"
-PAGES = ["vue_ensemble", "previsions", "portefeuille", "decisions", "blockchain", "experiences"]
+PAGES = [
+    "direct",
+    "vue_ensemble",
+    "previsions",
+    "portefeuille",
+    "decisions",
+    "blockchain",
+    "experiences",
+]
 
 pytestmark = pytest.mark.skipif(
     not (ROOT / "outputs" / "ledger" / "test" / "buy_and_hold.jsonl").is_file(),
