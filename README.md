@@ -276,7 +276,7 @@ git pull --no-edit origin main
 git add outputs/models/live data/raw/XAU_1d_data.csv data/raw/XAU_1d_gapfill.csv data/raw/XAU_1d_update.csv
 git commit -m "Simulation en direct : modèles figés et données pour GitHub Actions"
 git push origin main
-cat keys/ledger_ed25519.key    # à copier dans le secret LEDGER_PRIVATE_KEY
+base64 -w0 keys/ledger_ed25519.key; echo   # une ligne à copier dans le secret LEDGER_PRIVATE_KEY
 ```
 
 Puis, sur GitHub, **Settings → Secrets and variables → Actions → New repository secret**,
@@ -287,7 +287,7 @@ quatre secrets (les trois premiers sont dans `.env`) :
 | `TWELVEDATA_API_KEY` | la clé Twelve Data |
 | `SEPOLIA_RPC_URL` | l'adresse du nœud Sepolia |
 | `SEPOLIA_PRIVATE_KEY` | la clé du portefeuille de test |
-| `LEDGER_PRIVATE_KEY` | tout le contenu de `keys/ledger_ed25519.key`, lignes `BEGIN`/`END` comprises |
+| `LEDGER_PRIVATE_KEY` | la ligne affichée par `base64 -w0` (ou le fichier PEM entier) |
 
 Essai : onglet **Actions → Simulation en direct → Run workflow**. Un lancement raté
 envoie un e-mail ; le jour est rattrapé le lendemain, marqué « en retard ». Les poids
