@@ -1,0 +1,29 @@
+{
+  "net": {
+    "n_features": 20,
+    "hidden": 64,
+    "layers": 1,
+    "dropout": 0.12927106944216266
+  },
+  "train": {
+    "lr": 0.0004955444375329789,
+    "batch_size": 64,
+    "weight_decay": 1.7340757361690668e-06,
+    "loss": "mse",
+    "max_epochs": 100,
+    "patience": 15,
+    "clip": 1.0
+  },
+  "y_scale": 0.010775853879749775,
+  "best_epochs": [
+    19,
+    20,
+    35
+  ],
+  "kind": "gru",
+  "seeds": [
+    0,
+    1,
+    2
+  ]
+}

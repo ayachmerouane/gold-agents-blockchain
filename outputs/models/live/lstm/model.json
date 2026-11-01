@@ -1,0 +1,29 @@
+{
+  "net": {
+    "n_features": 20,
+    "hidden": 32,
+    "layers": 2,
+    "dropout": 0.28362871681672647
+  },
+  "train": {
+    "lr": 0.000815241575370242,
+    "batch_size": 32,
+    "weight_decay": 5.59922365406335e-05,
+    "loss": "mse",
+    "max_epochs": 100,
+    "patience": 15,
+    "clip": 1.0
+  },
+  "y_scale": 0.010775853879749775,
+  "best_epochs": [
+    14,
+    7,
+    18
+  ],
+  "kind": "lstm",
+  "seeds": [
+    0,
+    1,
+    2
+  ]
+}
