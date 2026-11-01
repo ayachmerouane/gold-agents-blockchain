@@ -175,10 +175,23 @@ def test_fetch_twelvedata_no_data_is_empty() -> None:
     assert df.empty
 
 
-def test_twelvedata_key_required(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_twelvedata_key_required(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(sources.TWELVEDATA_KEY_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)  # pas de .env
     with pytest.raises(sources.SourceError, match=sources.TWELVEDATA_KEY_ENV):
         sources.fetch_twelvedata(date(2026, 1, 1), date(2026, 1, 2), get=FakeGet(b"{}"))
+
+
+def test_twelvedata_key_read_from_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(sources.TWELVEDATA_KEY_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        '# portefeuille\nSEPOLIA_RPC_URL=x\nexport TWELVEDATA_API_KEY="abc123"\n',
+        encoding="utf-8",
+    )
+    assert sources._twelvedata_key() == "abc123"
+    monkeypatch.setenv(sources.TWELVEDATA_KEY_ENV, "env")
+    assert sources._twelvedata_key() == "env"  # l'environnement l'emporte
 
 
 # --- yfinance (module simulé) ---
