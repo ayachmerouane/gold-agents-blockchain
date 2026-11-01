@@ -320,6 +320,15 @@ uv sync --extra dev --extra dashboard     # Streamlit et Plotly (une fois)
 make dashboard                            # puis ouvrir http://localhost:8501
 ```
 
+**En ligne (Streamlit Community Cloud, gratuit).** Sur https://share.streamlit.io, se
+connecter avec GitHub, **Create app → Deploy a public app from GitHub** : dépôt
+`ayachmerouane/gold-agents-blockchain`, branche `main`, fichier `dashboard/app.py`,
+puis **Advanced settings → Python 3.11** et **Deploy**. Les dépendances viennent de
+`dashboard/requirements.txt` (sans PyTorch : le tableau de bord ne recalcule rien).
+L'application se met à jour à chaque envoi sur `main`, donc chaque nuit avec la
+simulation en direct. Les pages qui lisent `outputs/results/` ou `mlruns/` (non
+versionnés) y sont plus courtes qu'en local.
+
 - **Ne calcule rien** : il lit les registres de `outputs/ledger/<période>/` (versionnés pour le test : un simple clone suffit), `ledger/` (clé publique, ancrages) et, s'ils existent, `outputs/results/` et `mlruns/mlflow.db`. La période (test final, validation…) se choisit dans la barre latérale.
 - **Six pages** : *Vue d'ensemble* (indicateurs du système choisi, tableau comparatif, robustesse aux frais, comparaison au hasard), *Prévisions* (prix et rendement réels contre prévus, bande d'incertitude, MAE/RMSE contre B0), *Portefeuille* (valeur, drawdown, exposition), *Décisions* (achats et ventes sur le prix, règle de l'agent risque, journal filtrable et exportable), *Blockchain* (explorateur de blocs, vérification de tous les registres, démo de falsification sur une copie en mémoire, état des ancrages Sepolia avec lien Etherscan), *Expériences* (réglages figés, hyperparamètres retenus, runs MLflow, figures).
 - La logique de lecture est dans `src/gold_agents/dashboard/data.py` (testée sans Streamlit) ; `dashboard/` ne fait qu'afficher.

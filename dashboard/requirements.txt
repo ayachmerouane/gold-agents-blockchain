@@ -1,0 +1,10 @@
+# Dépendances du tableau de bord hébergé (Streamlit Community Cloud) : il lit les
+# registres versionnés et ne recalcule rien, donc ni PyTorch ni LightGBM.
+streamlit>=1.50
+plotly>=5.20
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15
+pydantic>=2.6
+pyyaml>=6.0
+cryptography>=42
