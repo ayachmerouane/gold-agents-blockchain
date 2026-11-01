@@ -262,22 +262,55 @@ uv run gold-agents live             # chaque jour de cotation, après minuit UTC
 - Registre : `outputs/ledger/live/agents_live.jsonl` ; page « Simulation en direct » du
   tableau de bord. Options : `--no-update`, `--no-anchor`.
 
-### Automatiser chaque nuit (Windows)
+### Automatiser chaque nuit, PC éteint (GitHub Actions)
 
-`scripts/live_daily.sh` fait la routine complète : `git pull`, `gold-agents live`, puis
-commit et push du registre s'il y a un nouveau jour (journal : `outputs/live_daily.log`).
-Pour le lancer chaque nuit à 2 h, une seule fois dans **PowerShell** (pas Git Bash) :
+`.github/workflows/live.yml` lance `gold-agents live` chaque nuit à 1 h 30 UTC sur un
+serveur de GitHub, puis enregistre le nouveau bloc (signé, ancré sur Sepolia) dans le
+dépôt. Les modèles figés et les données sont versionnés pour cela : tout le monde peut
+vérifier que les poids sont ceux dont le SHA-256 est scellé dans le genèse.
+
+Une seule fois, depuis le PC où `live-init` a tourné (Git Bash) :
+
+```bash
+git pull --no-edit origin main
+git add outputs/models/live data/raw/XAU_1d_data.csv data/raw/XAU_1d_gapfill.csv data/raw/XAU_1d_update.csv
+git commit -m "Simulation en direct : modèles figés et données pour GitHub Actions"
+git push origin main
+cat keys/ledger_ed25519.key    # à copier dans le secret LEDGER_PRIVATE_KEY
+```
+
+Puis, sur GitHub, **Settings → Secrets and variables → Actions → New repository secret**,
+quatre secrets (les trois premiers sont dans `.env`) :
+
+| Secret | Valeur |
+|---|---|
+| `TWELVEDATA_API_KEY` | la clé Twelve Data |
+| `SEPOLIA_RPC_URL` | l'adresse du nœud Sepolia |
+| `SEPOLIA_PRIVATE_KEY` | la clé du portefeuille de test |
+| `LEDGER_PRIVATE_KEY` | tout le contenu de `keys/ledger_ed25519.key`, lignes `BEGIN`/`END` comprises |
+
+Essai : onglet **Actions → Simulation en direct → Run workflow**. Un lancement raté
+envoie un e-mail ; le jour est rattrapé le lendemain, marqué « en retard ». Les poids
+sont les mêmes, mais un calcul sur Linux peut différer de Windows au dernier chiffre
+près. Si GitHub met la planification en pause après une longue inactivité du dépôt, la
+réactiver dans l'onglet Actions.
+
+### Ou depuis votre PC (Windows)
+
+`scripts/live_daily.sh` fait la même routine sur votre PC : `git pull`, `gold-agents live`,
+puis commit et push (journal : `outputs/live_daily.log`). N'utilisez **qu'une** des deux
+méthodes. Pour le lancer chaque nuit à 2 h, une fois dans **PowerShell** (pas Git Bash) :
 
 ```powershell
-$a = New-ScheduledTaskAction -Execute "C:\Program Files\Git\bin\bash.exe" -Argument "-lc 'cd /c/gold-agents-blockchain && bash scripts/live_daily.sh'"
+$a = New-ScheduledTaskAction -Execute "C:\Program Files\Git\bin\bash.exe" -Argument '-lc "bash /c/gold-agents-blockchain/scripts/live_daily.sh"' -WorkingDirectory "C:\gold-agents-blockchain"
 $t = New-ScheduledTaskTrigger -Daily -At 2am
 $s = New-ScheduledTaskSettingsSet -StartWhenAvailable
 Register-ScheduledTask -TaskName "GoldAgentsLive" -Action $a -Trigger $t -Settings $s -Force
 Start-ScheduledTask -TaskName "GoldAgentsLive"   # essai immédiat, puis lire outputs/live_daily.log
 ```
 
-PC éteint à 2 h : la tâche part dès qu'il se rallume (`-StartWhenAvailable`) ; un jour
-rattrapé ainsi est marqué « en retard ». La clé Twelve Data est lue dans `.env`.
+PC éteint à 2 h : la tâche part dès qu'il se rallume (`-StartWhenAvailable`). La clé
+Twelve Data est lue dans `.env`.
 Arrêter : `Unregister-ScheduledTask -TaskName "GoldAgentsLive" -Confirm:$false`.
 
 ## Tableau de bord (phase 9)

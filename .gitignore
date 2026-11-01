@@ -20,12 +20,18 @@ htmlcov/
 data/raw/*
 !data/raw/.gitkeep
 !data/raw/CHECKSUMS.txt
+# Données de la simulation en direct, lues chaque nuit par GitHub Actions
+!data/raw/XAU_1d_data.csv
+!data/raw/XAU_1d_gapfill.csv
+!data/raw/XAU_1d_update.csv
 data/processed/*
 !data/processed/.gitkeep
 
 # Sorties générées
 outputs/models/*
 !outputs/models/.gitkeep
+# Modèles figés de la simulation en direct : leurs SHA-256 sont scellés dans le genèse
+!outputs/models/live/
 outputs/results/*
 !outputs/results/.gitkeep
 outputs/eda/

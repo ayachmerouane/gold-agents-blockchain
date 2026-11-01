@@ -1,0 +1,86 @@
+name: Simulation en direct
+
+# Chaque nuit, sur un serveur de GitHub : nouvelles cotations, décision des agents,
+# bloc signé et ancré sur Sepolia, puis sauvegarde dans le dépôt. Aucun PC allumé.
+# Tout ce qu'il faut (modèles figés, données, registre) est dans le dépôt ; les clés
+# sont dans les secrets du dépôt (Settings → Secrets and variables → Actions).
+on:
+  schedule:
+    # 1 h 30 UTC : la barre de la veille est close (après minuit UTC). GitHub peut
+    # lancer avec quelques minutes de retard, sans effet sur la règle « à temps ».
+    - cron: "30 1 * * *"
+  workflow_dispatch: # bouton « Run workflow » dans l'onglet Actions
+
+# Jamais deux lancements en même temps sur le même registre.
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+permissions:
+  contents: write # pour enregistrer le nouveau bloc dans le dépôt
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+      SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+      SEPOLIA_PRIVATE_KEY: ${{ secrets.SEPOLIA_PRIVATE_KEY }}
+      LEDGER_PRIVATE_KEY: ${{ secrets.LEDGER_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier les fichiers et les secrets
+        run: |
+          missing=0
+          for f in data/raw/XAU_1d_data.csv data/raw/XAU_1d_gapfill.csv \
+                   data/raw/XAU_1d_update.csv outputs/models/live/scaler.json \
+                   outputs/ledger/live/agents_live.jsonl ledger/public_key.pem; do
+            if [ ! -e "$f" ]; then
+              echo "::error::$f absent du dépôt (README, « Automatiser avec GitHub Actions »)"
+              missing=1
+            fi
+          done
+          for s in TWELVEDATA_API_KEY SEPOLIA_RPC_URL SEPOLIA_PRIVATE_KEY LEDGER_PRIVATE_KEY; do
+            if [ -z "${!s}" ]; then
+              echo "::error::secret $s absent (Settings → Secrets and variables → Actions)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.11 et les dépendances
+        run: |
+          uv python install 3.11
+          uv sync --extra ml --extra anchor
+
+      - name: Clé de signature du registre
+        run: |
+          umask 077
+          mkdir -p keys
+          printf '%s\n' "$LEDGER_PRIVATE_KEY" > keys/ledger_ed25519.key
+
+      - name: Simulation en direct (un jour de plus)
+        run: uv run gold-agents live
+
+      - name: Enregistrer le nouveau bloc dans le dépôt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add outputs/ledger/live ledger data/raw/XAU_1d_update.csv
+          if git diff --cached --quiet; then
+            echo "Rien de nouveau à enregistrer (week-end ou jour férié)."
+            exit 0
+          fi
+          git commit -m "Simulation en direct : $(date -u '+%Y-%m-%d')"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((i * 5))
+          done
+          exit 1
