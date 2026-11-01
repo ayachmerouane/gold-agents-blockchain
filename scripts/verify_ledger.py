@@ -189,13 +189,28 @@ def check_anchor(anchor: dict[str, Any], rpc_url: str) -> str:
 
 def anchored_heads(
     anchors: list[dict[str, Any]],
-) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
-    """Fichier -> (dernier ancrage qui le contient, son entrée : blocs et hash ancrés)."""
-    heads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+) -> dict[str, list[tuple[dict[str, Any], dict[str, Any]]]]:
+    """Fichier -> ancrages qui le contiennent, dans l'ordre (ancrage, blocs et hash ancrés)."""
+    heads: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for anchor in anchors:
         for entry in anchor["ledgers"]:
-            heads[entry["file"]] = (anchor, entry)
+            heads.setdefault(entry["file"], []).append((anchor, entry))
     return heads
+
+
+def find_anchor(
+    path: str,
+    heads: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    moves: list[dict[str, str]],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Dernier ancrage d'un registre. Un registre archivé (ledger/moves.json) est cherché
+    sous son ancien nom, parmi les ancrages faits avant son déplacement."""
+    name, before = path, None
+    for move in reversed(moves):
+        if move["to"] == name:
+            name, before = move["from"], move["moved_at"]
+    found = [h for h in heads.get(name, []) if before is None or h[0]["anchored_at"] < before]
+    return found[-1] if found else None
 
 
 def read_blocks(path: Path) -> list[dict[str, Any]]:
@@ -247,7 +262,6 @@ def main(argv: list[str] | None = None) -> int:
     # Registres archivés (nouvelle tentative) : ledger/moves.json donne leur nom ancré.
     moves_path = args.anchors.parent / "moves.json" if args.anchors else None
     moves = json.loads(moves_path.read_text("utf-8")) if moves_path and moves_path.exists() else []
-    origin = {m["to"]: m["from"] for m in moves}
     used: dict[str, dict[str, Any]] = {}
 
     ok = True
@@ -273,10 +287,7 @@ def main(argv: list[str] | None = None) -> int:
             ok = False
             continue
         if args.anchors:
-            name = path.as_posix()
-            while name in origin and name not in heads:
-                name = origin[name]
-            found = heads.get(name)
+            found = find_anchor(path.as_posix(), heads, moves)
             if found is None:
                 detail += ", non ancré"
             elif (len(blocks), head) != (found[1]["blocks"], found[1]["head"]):

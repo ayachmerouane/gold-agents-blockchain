@@ -43,3 +43,5 @@ mlruns/
 .idea/
 .vscode/
 keys/
+# Réglages figés : ancrés sur Sepolia, versionnés comme preuve (toutes les versions).
+!outputs/ledger/reglages_figes*.jsonl

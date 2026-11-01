@@ -104,14 +104,18 @@ def test_apply_settings_rewrites_only_the_settings(tmp_path: Path) -> None:
         "max_drawdown": 0.25,
         "cooldown_days": 20,
     }
+    cfg = load_config(path)
+    now = {**cfg.strategy.model_dump(), **cfg.risk.model_dump()}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    missing = {k for k in settings if k not in {**raw["strategy"], **raw["risk"]}}
     changed = apply_settings(path, settings)
-    assert set(changed) == {"buy_rule", "theta_buy", "min_confidence", "stop_loss"}
+    assert set(changed) == {k for k in settings if now[k] != settings[k]}
     cfg = load_config(path)
     assert cfg.strategy.buy_rule == "quantile" and cfg.strategy.theta_buy == 0.8
     assert cfg.strategy.min_confidence is None and cfg.risk.stop_loss == 0.05
     assert cfg.tuning is not None and cfg.tuning.grid.theta_buy == [0.5, 0.7, 0.8, 0.9]
     after = path.read_text(encoding="utf-8").splitlines()
-    assert len(after) == len(before) + 1  # buy_rule ajouté, rien d'autre
+    assert len(after) == len(before) + len(missing)  # clés absentes ajoutées, rien d'autre
     assert apply_settings(path, settings) == []  # deuxième passage : rien à changer
     Config.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
@@ -136,6 +140,31 @@ def test_archived_ledger_keeps_its_anchor_valid(tmp_path: Path) -> None:
         "outputs/ledger/test_tentative1/plan.jsonl"
     )
     assert data.anchor_checks(tmp_path)[-1]["status"] == "conforme"
+
+    # Tentative 2 : un nouveau registre au même chemin, ancré APRÈS le déplacement. Chaque
+    # ancrage doit être comparé au bon fichier (l'ancien archivé, ou le nouveau).
+    new = tmp_path / "outputs" / "ledger" / "test" / "oracle.jsonl"
+    old_lines = (
+        (tmp_path / "outputs" / "ledger" / "test_tentative1" / "oracle.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    new.parent.mkdir(parents=True, exist_ok=True)
+    new.write_text("\n".join(old_lines[:10]) + "\n", encoding="utf-8")
+    head = data.ledger_head(new, tmp_path)
+    anchors_path = tmp_path / "ledger" / "anchors.json"
+    anchors = json.loads(anchors_path.read_text(encoding="utf-8"))
+    anchors.append(
+        {
+            **anchors[-1],
+            "anchored_at": "2999-01-01T00:00:00+00:00",
+            "ledgers": [{"file": head.file, "blocks": head.blocks, "head": head.head}],
+            "digest": data.anchor_digest([head]),
+        }
+    )
+    anchors_path.write_text(json.dumps(anchors), encoding="utf-8")
+    checks = data.anchor_checks(tmp_path)
+    assert checks[-1]["status"] == "conforme" and checks[-2]["status"] == "conforme"
 
     with pytest.raises(FileExistsError):
         dst = tmp_path / "outputs" / "ledger" / "test_tentative1" / "oracle.jsonl"

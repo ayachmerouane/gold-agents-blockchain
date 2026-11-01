@@ -16,15 +16,16 @@ from pathlib import Path
 MOVES_FILE = Path("ledger/moves.json")
 
 
-def read_moves(path: Path = MOVES_FILE) -> dict[str, str]:
-    """Ancien chemin -> nouveau chemin (chemins relatifs à la racine du dépôt)."""
+def read_moves(path: Path = MOVES_FILE) -> list[dict[str, str]]:
+    """Les déplacements, dans l'ordre : ancien chemin, nouveau chemin, date."""
     if not path.is_file():
-        return {}
-    return {m["from"]: m["to"] for m in json.loads(path.read_text(encoding="utf-8"))}
+        return []
+    moves: list[dict[str, str]] = json.loads(path.read_text(encoding="utf-8"))
+    return moves
 
 
 def record_move(old: Path, new: Path, path: Path = MOVES_FILE) -> None:
-    moves = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+    moves = read_moves(path)
     moves.append(
         {
             "from": old.as_posix(),
@@ -46,10 +47,13 @@ def archive_file(old: Path, new: Path, moves_path: Path = MOVES_FILE) -> Path:
     return new
 
 
-def resolve(file: str, moves: dict[str, str]) -> str:
-    """Emplacement actuel d'un fichier ancré (suit les déplacements successifs)."""
-    seen = set()
-    while file in moves and file not in seen:
-        seen.add(file)
-        file = moves[file]
+def resolve(file: str, moves: list[dict[str, str]], anchored_at: str | None = None) -> str:
+    """Emplacement actuel du fichier ancré le `anchored_at`.
+
+    Seuls comptent les déplacements faits APRÈS l'ancrage : un nouveau registre écrit
+    plus tard au même chemin (tentative 2) n'est pas celui qui a été ancré avant.
+    """
+    for move in moves:  # dans l'ordre chronologique : suit les déplacements successifs
+        if move["from"] == file and (anchored_at is None or move["moved_at"] > anchored_at):
+            file = move["to"]
     return file

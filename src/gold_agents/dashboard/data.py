@@ -395,7 +395,7 @@ def anchor_checks(root: Path) -> list[dict[str, Any]]:
         current: list[LedgerHead] = []
         for entry in anchor["ledgers"]:
             # Un registre archivé est relu à sa nouvelle place, sous son nom ancré.
-            ledger = root / resolve(entry["file"], moves)
+            ledger = root / resolve(entry["file"], moves, anchor["anchored_at"])
             if ledger.is_file():
                 head = ledger_head(ledger, root)
                 head = LedgerHead(entry["file"], head.blocks, head.head)
