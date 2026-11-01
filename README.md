@@ -262,6 +262,20 @@ uv run gold-agents live             # chaque jour de cotation, après minuit UTC
 - Registre : `outputs/ledger/live/agents_live.jsonl` ; page « Simulation en direct » du
   tableau de bord. Options : `--no-update`, `--no-anchor`.
 
+### Automatiser chaque nuit (Windows)
+
+`scripts/live_daily.sh` fait la routine complète : `git pull`, `gold-agents live`, puis
+commit et push du registre s'il y a un nouveau jour (journal : `outputs/live_daily.log`).
+Pour le lancer chaque nuit à 2 h, une seule fois dans **PowerShell** :
+
+```powershell
+schtasks /Create /TN "GoldAgentsLive" /SC DAILY /ST 02:00 /F /TR "\"C:\Program Files\Git\bin\bash.exe\" -lc 'cd /c/gold-agents-blockchain && bash scripts/live_daily.sh'"
+schtasks /Run /TN "GoldAgentsLive"    # essai immédiat, puis lire outputs/live_daily.log
+```
+
+Le PC doit être allumé (une nuit manquée est rattrapée la suivante, marquée « en retard »).
+La clé Twelve Data est lue dans `.env`. Arrêter : `schtasks /Delete /TN "GoldAgentsLive" /F`.
+
 ## Tableau de bord (phase 9)
 
 ```bash
