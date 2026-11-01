@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from gold_agents.config import DEFAULT_CONFIG_PATH, load_config
+from gold_agents.config import DEFAULT_CONFIG_PATH, apply_settings, load_config
 from gold_agents.data import clean as cleaning
 from gold_agents.data import sources, update
 from gold_agents.data.load import read_kaggle_csv, read_update_csv
@@ -455,6 +455,11 @@ def tune(
     quick: bool = typer.Option(
         False, "--quick", help="Essai rapide : 1 graine, 5 époques (vérifie la chaîne)."
     ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Écrire le réglage choisi dans config.yaml (sections strategy, risk).",
+    ),
 ) -> None:
     """Phase 6 : réglage des agents sur une grille, en walk-forward (le test n'est pas lu)."""
     import hashlib
@@ -551,21 +556,36 @@ def tune(
     typer.echo("Part de jours en hausse : " + "  ".join(f"{f}: {v:.1%}" for f, v in share.items()))
 
     sim_cfg = cfg.simulation
+    st_cfg = cfg.strategy
     sim = tu.Simulator(
         CostModel(sim_cfg.fee_rate, sim_cfg.slippage),
         sim_cfg.initial_capital,
         cfg.risk.max_position,
         cfg.risk.cooldown_days,
         sim_cfg.risk_free_rate,
+        tc.buy_rule,
+        st_cfg.quantile_window,
+        st_cfg.quantile_min_days,
     )
+    limits = (tc.min_trades_per_year, tc.max_trades_per_year)
     markets = tu.fold_markets(frame, forecasts, list(tc.folds))
     grid = tu.combos(tc.grid)
-    typer.echo(f"\nGrille : {len(grid)} réglages x {len(markets)} périodes.")
+    rule_text = (
+        "θ_buy = rendement prévu minimal"
+        if tc.buy_rule == "absolute"
+        else f"θ_buy = quantile des {st_cfg.quantile_window} prévisions précédentes"
+    )
+    typer.echo(f"\nGrille : {len(grid)} réglages x {len(markets)} périodes ({rule_text}).")
+    if tc.min_trades_per_year or tc.max_trades_per_year:
+        typer.echo(
+            f"Contrainte : entre {tc.min_trades_per_year:g} et "
+            f"{tc.max_trades_per_year or '∞'} trades par an dans chaque période."
+        )
     table, bh = tu.run_grid(markets, grid, sim)
     folds = [m.fold for m in markets]
-    summary = tu.summarize_grid(table, tc.grid, folds)
+    summary = tu.summarize_grid(table, tc.grid, folds, *limits)
     chosen = tu.best(summary)
-    walk = tu.walk_forward(table, bh, tc.grid, markets, sim)
+    walk = tu.walk_forward(table, bh, tc.grid, markets, sim, *limits)
     costs = tu.costs_sensitivity(markets, chosen, sim, list(tc.costs_factors))
     refs, draws = tu.references(markets, chosen, sim, 20 if quick else tc.random_runs, cfg.seed)
 
@@ -577,11 +597,18 @@ def tune(
     table_fc = ForecastTable(
         chosen.model, fc_days, last.r_hat[chosen.model][ok], None if sig is None else sig[ok]
     )
-    p = chosen.params(cfg.risk.max_position, cfg.risk.cooldown_days)
+    p = sim.params(chosen)
     system = AgentSystem(
         "agents_regles",
         ForecastAgent(table_fc),
-        StrategyAgent(p.theta_buy, p.theta_sell, p.min_confidence),
+        StrategyAgent(
+            p.theta_buy,
+            p.theta_sell,
+            p.min_confidence,
+            p.buy_rule,
+            p.quantile_window,
+            p.quantile_min_days,
+        ),
         RiskAgent(p.max_position, p.stop_loss, p.max_drawdown, False, p.cooldown_days),
         ExecutionAgent(sim.costs),
     )
@@ -599,17 +626,21 @@ def tune(
     diag.to_csv(out_dir / "forecast_diagnostics.csv", index=False)
     grid_sha = hashlib.sha256((out_dir / "grid.csv").read_bytes()).hexdigest()
     best_row = summary.iloc[0]
+    settings = tr.chosen_settings(
+        chosen,
+        cfg.risk.cooldown_days,
+        tc.buy_rule,
+        st_cfg.quantile_window,
+        st_cfg.quantile_min_days,
+    )
     (out_dir / "chosen.json").write_text(
         json.dumps(
             {
-                "chosen": {
-                    "model": chosen.model,
-                    "theta_buy": chosen.theta_buy,
-                    "theta_sell": chosen.theta_sell,
-                    "min_confidence": chosen.min_confidence,
-                    "stop_loss": chosen.stop_loss,
-                    "max_drawdown": chosen.max_drawdown,
-                    "cooldown_days": cfg.risk.cooldown_days,
+                "chosen": settings,
+                "trades_ok_folds": f"{int(best_row['trades_ok'])}/{len(folds)}",
+                "trades_per_year": {
+                    "min": tc.min_trades_per_year,
+                    "max": tc.max_trades_per_year,
                 },
                 "mean_sharpe": float(best_row["sharpe"]),
                 "plateau_sharpe": float(best_row["plateau"]),
@@ -648,10 +679,19 @@ def tune(
         f"\nContrôle moteur complet sur la dernière période : "
         f"{'identique' if same else 'DIFFÉRENT'} ({fast_value:.2f} / {full_value:.2f})"
     )
-    typer.echo(f"\nRéglage choisi : {chosen.describe()}")
-    typer.echo(
-        "À recopier dans config/config.yaml :\n" + tr.yaml_snippet(chosen, cfg.risk.cooldown_days)
-    )
+    typer.echo(f"\nRéglage choisi : {chosen.describe(tc.buy_rule)}")
+    if apply:
+        changed = apply_settings(config, settings)
+        typer.echo(
+            f"Écrit dans {config} : "
+            + (", ".join(changed) if changed else "rien à changer (déjà à jour)")
+            + ". Étape suivante : `uv run gold-agents freeze`."
+        )
+    else:
+        typer.echo(
+            f"À recopier dans {config} (ou relancer avec --apply) :\n"
+            + tr.yaml_snippet(chosen, cfg.risk.cooldown_days, tc.buy_rule)
+        )
     typer.echo(
         f"Schéma : {figure}\nRésultats : {out_dir}  ({time.perf_counter() - start_time:.0f} s)"
     )
@@ -664,21 +704,34 @@ TUNING_DIR_OPTION = typer.Option(
 )
 
 
+MOVES_OPTION = typer.Option(
+    Path("ledger/moves.json"),
+    "--moves",
+    help="Journal des registres archivés (versionné) : l'ancrage reste vérifiable.",
+)
+
+
 @app.command()
 def freeze(
     config: Path = CONFIG_OPTION,
     tuning_dir: Path = TUNING_DIR_OPTION,
     ledger_dir: Path = LEDGER_DIR_OPTION,
     key: Path = PRIVATE_KEY_OPTION,
+    again: str = typer.Option(
+        "", "--again", help="Refiger des réglages déjà figés : raison, inscrite dans le registre."
+    ),
+    moves_path: Path = MOVES_OPTION,
 ) -> None:
     """Fige les réglages : les compare à `tune`, puis les scelle dans un bloc genèse."""
     import hashlib
     import json
 
+    from gold_agents.blockchain.archive import archive_file
     from gold_agents.blockchain.chain import Chain
     from gold_agents.blockchain.storage import read_jsonl, write_jsonl
     from gold_agents.data.prepare import FEATURES_FILE
     from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation import final as fe
 
     cfg = load_config(config)
     chosen_path = tuning_dir / "chosen.json"
@@ -691,30 +744,56 @@ def freeze(
             "Les résultats viennent de `tune --quick` : relancer `tune` en entier.", err=True
         )
         raise typer.Exit(code=1)
-    st, rk = cfg.strategy, cfg.risk
-    current = {
-        "model": st.model,
-        "theta_buy": st.theta_buy,
-        "theta_sell": st.theta_sell,
-        "min_confidence": st.min_confidence,
-        "stop_loss": rk.stop_loss,
-        "max_drawdown": rk.max_drawdown,
-        "cooldown_days": rk.cooldown_days,
+    current = fe.current_settings(cfg)
+    keys = set(current) | set(chosen["chosen"])
+    diff = {
+        k: (current.get(k), chosen["chosen"].get(k))
+        for k in sorted(keys)
+        if current.get(k) != chosen["chosen"].get(k)
     }
-    diff = {k: (current[k], v) for k, v in chosen["chosen"].items() if current[k] != v}
     if diff:
         for k, (a, b) in diff.items():
             typer.echo(f"  {k} : config {a!r}, tune {b!r}", err=True)
-        typer.echo("La configuration ne correspond pas au réglage choisi par `tune`.", err=True)
+        typer.echo(
+            "La configuration ne correspond pas au réglage choisi par `tune` "
+            "(`uv run gold-agents tune --apply` l'écrit dans la configuration).",
+            err=True,
+        )
         raise typer.Exit(code=1)
     grid = tuning_dir / "grid.csv"
     if hashlib.sha256(grid.read_bytes()).hexdigest() != chosen["grid_sha256"]:
         typer.echo(f"{grid} a changé depuis `tune`.", err=True)
         raise typer.Exit(code=1)
+
+    # Des réglages déjà figés ne sont jamais écrasés : archivés, et cités dans le nouveau.
+    target = ledger_dir / "reglages_figes.jsonl"
+    previous: list[dict[str, object]] = []
+    version = 1
+    if target.exists():
+        if not again:
+            typer.echo(
+                f"{target} existe déjà : des réglages sont figés. Pour en figer de nouveaux, "
+                '--again "raison" (l\'ancien registre est archivé et cité).',
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        old = read_jsonl(target)
+        old_genesis = old.blocks[0].events[0]
+        version = int(old_genesis.get("version", 1)) + 1
+        kept = archive_file(
+            target, target.with_name(f"reglages_figes_v{version - 1}.jsonl"), moves_path
+        )
+        previous = [
+            *old_genesis.get("previous_versions", []),
+            {"file": kept.as_posix(), "head": old.head.hash, "settings": old_genesis["settings"]},
+        ]
     events = [
         {
             "type": "GENESIS",
             "kind": "FROZEN_SETTINGS",
+            "version": version,
+            "previous_versions": previous,
+            "reason_again": again or None,
             "frozen_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "settings": current,
             "config": json.loads(cfg.model_dump_json()),
@@ -724,11 +803,16 @@ def freeze(
         }
     ]
     signer = _ledger_signer(key)
-    path = write_jsonl(Chain.start(events, signer), ledger_dir / "reglages_figes.jsonl")
+    path = write_jsonl(Chain.start(events, signer), target)
     chain = read_jsonl(path)
     verification = chain.verify(signer.public_key if signer else None)
-    typer.echo(f"Réglages figés dans {path} : {verification.describe()}.")
+    typer.echo(f"Réglages figés (version {version}) dans {path} : {verification.describe()}.")
     typer.echo(f"Empreinte du bloc genèse : {chain.head.hash}")
+    if version > 1:
+        typer.echo(
+            "Pour lancer le test avec ces réglages :\n"
+            f'  uv run gold-agents evaluate --frozen-head {chain.head.hash} --again "raison"'
+        )
 
 
 LEDGERS_ARGUMENT = typer.Argument(None, help="Fichiers .jsonl (défaut : outputs/ledger/).")
@@ -816,6 +900,7 @@ def evaluate(
     again: str = typer.Option(
         "", "--again", help="Relancer un test déjà lancé : raison, inscrite dans le registre."
     ),
+    moves_path: Path = MOVES_OPTION,
 ) -> None:
     """Phase 8 : un seul run sur le test, toutes les stratégies, registres signés et ancrés."""
     import json
@@ -896,30 +981,42 @@ def evaluate(
             raise typer.Exit(code=1) from exc
 
     # 2. Un seul run : un plan déjà écrit veut dire que le test a déjà été lancé.
+    # Une nouvelle tentative n'efface rien : les registres de la précédente sont archivés
+    # dans `<dossier>_tentativeN/` (déplacements notés dans ledger/moves.json, l'ancrage
+    # reste vérifiable) et cités dans le nouveau plan avec la raison.
+    from gold_agents.blockchain.archive import archive_file
+
     plan_path = ledgers / fe.PLAN_FILE
+    archived = sorted(
+        ledgers.parent.glob(f"{ledgers.name}_tentative*"),
+        key=lambda d: int(d.name.rsplit("tentative", 1)[1] or 0),
+    )
     previous: list[dict[str, object]] = []
-    if plan_path.exists() and not rehearsal:
-        old = read_jsonl(plan_path)
-        old_plan = old.blocks[0].events[0]
+    for d in archived:
+        if (d / fe.PLAN_FILE).exists():
+            previous.append(
+                {"ledgers": d.as_posix(), "head": read_jsonl(d / fe.PLAN_FILE).head.hash}
+            )
+    if (plan_path.exists() or previous) and not rehearsal:
         if not again:
+            done = len(previous) + plan_path.exists()
             typer.echo(
-                f"Le test a déjà été lancé (plan {old.head.hash[:16]}…, tentative "
-                f"{old_plan.get('attempt', 1)}). Le principe : un seul run. Pour relancer "
-                'quand même, --again "raison" ; la raison et l\'ancien plan sont inscrits '
-                "dans le nouveau registre.",
+                f"Le test a déjà été lancé ({done} tentative(s)). Le principe : un seul run. "
+                'Pour relancer quand même, --again "raison" ; les registres de la tentative '
+                "précédente sont archivés, et la raison est inscrite dans le nouveau plan.",
                 err=True,
             )
             raise typer.Exit(code=1)
-        n = int(old_plan.get("attempt", 1))
-        kept = plan_path.with_name(f"plan_tentative{n}.jsonl")
-        plan_path.replace(kept)
-        previous = [
-            *old_plan.get("previous_attempts", []),
-            {
-                "plan": str(kept),
-                "head": old.head.hash,
-            },
-        ]
+        if plan_path.exists():
+            n = len(previous) + 1
+            kept_dir = ledgers.with_name(f"{ledgers.name}_tentative{n}")
+            head = read_jsonl(plan_path).head.hash
+            for f in sorted(ledgers.glob("*.jsonl")):
+                archive_file(f, kept_dir / f.name, moves_path)
+            if out.is_dir():
+                out.replace(out.with_name(f"{out.name}_tentative{n}"))
+            previous.append({"ledgers": kept_dir.as_posix(), "head": head})
+            typer.echo(f"Tentative {n} archivée dans {kept_dir} (rien n'est effacé).")
 
     start_time = time.perf_counter()
     frame, scaler = load_prepared(cfg.data.processed_dir)

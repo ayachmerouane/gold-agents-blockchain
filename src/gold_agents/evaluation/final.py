@@ -87,8 +87,10 @@ MODEL_LABELS = {
 
 
 def current_settings(cfg: Config) -> dict[str, Any]:
+    """Réglages des agents. La règle relative (tentative 2) ajoute ses trois clés ; la
+    règle absolue garde exactement les clés figées le 30/10 (tentative 1)."""
     st, rk = cfg.strategy, cfg.risk
-    return {
+    out: dict[str, Any] = {
         "model": st.model,
         "theta_buy": st.theta_buy,
         "theta_sell": st.theta_sell,
@@ -97,6 +99,13 @@ def current_settings(cfg: Config) -> dict[str, Any]:
         "max_drawdown": rk.max_drawdown,
         "cooldown_days": rk.cooldown_days,
     }
+    if st.buy_rule != "absolute":
+        out.update(
+            buy_rule=st.buy_rule,
+            quantile_window=st.quantile_window,
+            quantile_min_days=st.quantile_min_days,
+        )
+    return out
 
 
 def _config_diff(a: dict[str, Any], b: dict[str, Any], prefix: str = "") -> list[str]:

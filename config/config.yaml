@@ -27,8 +27,12 @@ features:
   return_lags: [1, 5, 10, 20]   # rendements des k derniers jours
 
 strategy:
-  # Phase 6 : réglage FIGÉ le 2026-10-30 (gold-agents tune, walk-forward 2011-2021),
-  # scellé par `gold-agents freeze`. Ne plus modifier avant le test (phase 8).
+  # Tentative 1 : réglage FIGÉ le 2026-10-30 (gold-agents tune, walk-forward 2011-2021),
+  # seuil d'achat absolu. Au test, l'ensemble n'a jamais prévu plus de 0,09 % : zéro trade.
+  # Tentative 2 : seuil relatif (quantile des prévisions passées). `tune --apply` écrit
+  # ici le nouveau réglage, puis `freeze --again` le scelle avant de relancer le test.
+  quantile_window: 250  # règle relative : prévisions des 250 jours précédents (~1 an)
+  quantile_min_days: 60 # pas d'achat tant qu'il y a moins de 60 prévisions passées
   theta_buy: 0.001      # 0,10 % : acheter seulement si r̂ > 0,10 %
   theta_sell: 0.0       # vendre dès que r̂ < 0
   min_confidence: 1.0   # k du filtre MC Dropout : acheter si r̂/σ̂ > 1 (P(hausse) > 84 %)
@@ -70,12 +74,17 @@ tuning:
     - ["2019-01-01", "2021-12-31"]
   early_stop_days: 250  # la dernière année du passé sert à l'arrêt anticipé
   seeds: [0, 1, 2]      # graines par réseau et par période
+  # Tentative 2 : θ_buy relatif. Acheter si r̂ dépasse le quantile θ_buy des prévisions
+  # passées du même modèle : ne dépend plus de l'échelle des prévisions.
+  buy_rule: quantile
+  min_trades_per_year: 4   # « ni 0, ni des milliers » : au moins 4 trades par an...
+  max_trades_per_year: 60  # ... et au plus 60, dans chaque période
   grid:                 # grille grossière (R4), pas d'Optuna
-    theta_buy: [0.0, 0.0002, 0.0005, 0.001]     # 0 ; 0,02 % ; 0,05 % ; 0,1 %
+    theta_buy: [0.5, 0.7, 0.8, 0.9]   # quantiles : médiane, 70e, 80e, 90e centile
     theta_sell: [0.0, 0.0002, 0.0005, 0.001]
     min_confidence: [null, 0.25, 0.5, 1.0]      # null : sans filtre MC Dropout
     stop_loss: [0.03, 0.05, 0.08]
     max_drawdown: [0.15, 0.20, 0.25]
-    models: [lstm, ensemble, lightgbm]
+    models: [ensemble]  # tentative 2 : le système principal annoncé (ensemble + MC)
   costs_factors: [0, 1, 2, 5]
   random_runs: 200      # stratégies aléatoires (même nombre de trades) par période

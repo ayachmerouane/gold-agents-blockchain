@@ -22,6 +22,7 @@ import pandas as pd
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from gold_agents.blockchain.anchor import LedgerHead, anchor_digest, etherscan_url
+from gold_agents.blockchain.archive import read_moves, resolve
 from gold_agents.blockchain.chain import Chain, Verification, rewrite_from, tamper_demo
 from gold_agents.blockchain.signing import Signer, fingerprint, load_public_key
 from gold_agents.blockchain.storage import read_jsonl
@@ -52,6 +53,16 @@ LABELS = {
     "aleatoire": "Hasard",
     "oracle": "Oracle (connaît le futur)",
 }
+
+
+def period_title(name: str) -> str:
+    """Nom lisible d'une période ; `test_tentative1` : « Test final, tentative 1 »."""
+    base, _, n = name.partition("_tentative")
+    if n:
+        return f"{PERIOD_LABELS.get(base, base).split(' (')[0]}, tentative {n} (archivée)"
+    return PERIOD_LABELS.get(name, name)
+
+
 PERIOD_LABELS = {
     "test": "Test final (2022-2026)",
     "final_val": "Répétition sur la validation",
@@ -81,7 +92,7 @@ class RunSet:
 
     @property
     def title(self) -> str:
-        return PERIOD_LABELS.get(self.name, self.name)
+        return period_title(self.name)
 
     def ledger(self, strategy: str) -> Path:
         return self.ledger_dir / f"{strategy}.jsonl"
@@ -377,14 +388,17 @@ def anchor_checks(root: Path) -> list[dict[str, Any]]:
     path = root / "ledger" / "anchors.json"
     if not path.is_file():
         return []
+    moves = read_moves(root / "ledger" / "moves.json")
     out = []
     for anchor in json.loads(path.read_text(encoding="utf-8")):
         files = []
         current: list[LedgerHead] = []
         for entry in anchor["ledgers"]:
-            ledger = root / entry["file"]
+            # Un registre archivé est relu à sa nouvelle place, sous son nom ancré.
+            ledger = root / resolve(entry["file"], moves)
             if ledger.is_file():
                 head = ledger_head(ledger, root)
+                head = LedgerHead(entry["file"], head.blocks, head.head)
                 current.append(head)
                 same = head.head == entry["head"] and head.blocks == entry["blocks"]
                 state = "identique" if same else "DIFFÉRENT"
@@ -531,9 +545,11 @@ def ledger_file_label(file: str) -> str:
     """« outputs/ledger/agents_val/agents_gru.jsonl » -> « Agents (GRU) · validation »."""
     path = Path(file)
     name = ledger_label(path.stem)
-    if path.stem == "reglages_figes":
-        return "Réglages figés (phase 6)"
-    period = PERIOD_SUFFIX.get(path.parent.name, path.parent.name)
+    if path.stem.startswith("reglages_figes"):
+        version = path.stem.partition("_v")[2]
+        return f"Réglages figés, version {version}" if version else "Réglages figés"
+    base, _, n = path.parent.name.partition("_tentative")
+    period = PERIOD_SUFFIX.get(base, base) + (f", tentative {n}" if n else "")
     return f"{name} · {period}" if path.parent.name != "ledger" else name
 
 

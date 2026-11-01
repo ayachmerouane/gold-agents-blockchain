@@ -244,6 +244,10 @@ def main(argv: list[str] | None = None) -> int:
 
     anchors = json.loads(args.anchors.read_text(encoding="utf-8")) if args.anchors else []
     heads = anchored_heads(anchors)
+    # Registres archivés (nouvelle tentative) : ledger/moves.json donne leur nom ancré.
+    moves_path = args.anchors.parent / "moves.json" if args.anchors else None
+    moves = json.loads(moves_path.read_text("utf-8")) if moves_path and moves_path.exists() else []
+    origin = {m["to"]: m["from"] for m in moves}
     used: dict[str, dict[str, Any]] = {}
 
     ok = True
@@ -269,7 +273,10 @@ def main(argv: list[str] | None = None) -> int:
             ok = False
             continue
         if args.anchors:
-            found = heads.get(path.as_posix())
+            name = path.as_posix()
+            while name in origin and name not in heads:
+                name = origin[name]
+            found = heads.get(name)
             if found is None:
                 detail += ", non ancré"
             elif (len(blocks), head) != (found[1]["blocks"], found[1]["head"]):

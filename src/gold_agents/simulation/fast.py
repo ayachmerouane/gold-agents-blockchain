@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from gold_agents.agents.strategy import BuyRule, relative_threshold
 from gold_agents.simulation.costs import CostModel
 
 TRADING_DAYS = 252
@@ -31,6 +32,42 @@ class AgentParams:
     max_drawdown: float = 0.20
     max_position: float = 1.0
     cooldown_days: int | None = None
+    buy_rule: BuyRule = "absolute"  # "quantile" : theta_buy est un niveau de quantile
+    quantile_window: int = 250
+    quantile_min_days: int = 60
+
+
+_THRESHOLDS: dict[tuple[bytes, float, int, int], np.ndarray] = {}
+
+
+def buy_thresholds(r_hat: np.ndarray, params: AgentParams) -> np.ndarray:
+    """Seuil d'achat de chaque jour, exactement comme `StrategyAgent.buy_threshold`.
+
+    En règle relative, le calcul ne dépend que des prévisions et de (q, fenêtre) : il est
+    gardé en cache, la grille le redemande pour chaque stop-loss et coupe-circuit.
+    """
+    if params.buy_rule == "absolute":
+        return np.full(len(r_hat), params.theta_buy)
+    key = (
+        r_hat.tobytes(),
+        params.theta_buy,
+        params.quantile_window,
+        params.quantile_min_days,
+    )
+    if key not in _THRESHOLDS:
+        if len(_THRESHOLDS) > 512:
+            _THRESHOLDS.clear()
+        out = np.full(len(r_hat), math.nan)
+        history: list[float] = []
+        for t, r in enumerate(r_hat):
+            if math.isnan(r):
+                continue
+            out[t] = relative_threshold(
+                history, params.theta_buy, params.quantile_window, params.quantile_min_days
+            )
+            history.append(float(r))
+        _THRESHOLDS[key] = out
+    return _THRESHOLDS[key]
 
 
 @dataclass(frozen=True)
@@ -120,6 +157,7 @@ def simulate_agents(
     n = len(closes)
     book = _Book(capital, costs)
     k = params.min_confidence
+    thresholds = buy_thresholds(r_hat, params)
     peak, halted, days_in_cash = 0.0, False, 0
     pending = 0  # +1 achat, -1 vente, 0 rien
     values: list[float] = []
@@ -142,7 +180,7 @@ def simulate_agents(
         signal = 0
         r = float(r_hat[t])
         if not math.isnan(r):
-            if r > params.theta_buy:
+            if r > thresholds[t]:  # faux si le seuil est NaN (historique trop court)
                 if not holding:
                     s = float(sigma_hat[t]) if sigma_hat is not None else 0.0
                     z = r / s if s else None

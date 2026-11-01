@@ -40,6 +40,9 @@ def summary_text(summary: pd.DataFrame, n: int = 10) -> pd.DataFrame:
             "perte max": top["worst_drawdown"].map(lambda v: f"{v:.1%}"),
             "trades": top["n_trades"].map(lambda v: f"{v:.0f}"),
             "DD ≤ B&H": [f"{a}/{b}" for a, b in zip(top["dd_ok"], top["n_folds"], strict=True)],
+            "trades OK": [
+                f"{a}/{b}" for a, b in zip(top["trades_ok"], top["n_folds"], strict=True)
+            ],
         }
     )
 
@@ -101,10 +104,38 @@ def references_text(refs: pd.DataFrame, bh: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def yaml_snippet(combo: Combo, cooldown_days: int | None) -> str:
+def chosen_settings(
+    combo: Combo,
+    cooldown_days: int | None,
+    buy_rule: str = "absolute",
+    quantile_window: int = 250,
+    quantile_min_days: int = 60,
+) -> dict[str, object]:
+    """Réglage choisi, clé par clé, tel qu'il doit figurer dans `config.yaml`."""
+    out: dict[str, object] = {
+        "model": combo.model,
+        "theta_buy": combo.theta_buy,
+        "theta_sell": combo.theta_sell,
+        "min_confidence": combo.min_confidence,
+        "stop_loss": combo.stop_loss,
+        "max_drawdown": combo.max_drawdown,
+        "cooldown_days": cooldown_days,
+    }
+    if buy_rule != "absolute":
+        out.update(
+            buy_rule=buy_rule,
+            quantile_window=quantile_window,
+            quantile_min_days=quantile_min_days,
+        )
+    return out
+
+
+def yaml_snippet(combo: Combo, cooldown_days: int | None, buy_rule: str = "absolute") -> str:
     k = "null" if combo.min_confidence is None else f"{combo.min_confidence:g}"
+    rule = f"  buy_rule: {buy_rule}\n" if buy_rule != "absolute" else ""
     return (
         "strategy:\n"
+        f"{rule}"
         f"  theta_buy: {combo.theta_buy:g}\n"
         f"  theta_sell: {combo.theta_sell:g}\n"
         f"  min_confidence: {k}\n"

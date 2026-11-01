@@ -14,6 +14,10 @@ Règle de choix, sur un ensemble de périodes :
    un réglage doit être bon lui-même et entouré de bons voisins. On préfère ainsi un
    plateau à un pic isolé, qui a toutes les chances d'être un coup de chance.
 
+Avec `min_trades_per_year` / `max_trades_per_year` (tentative 2), une contrainte passe
+avant les deux autres : faire, dans chaque période, un nombre de trades raisonnable. Un
+réglage qui ne trade jamais n'évalue rien (« ni 0, ni des milliers »).
+
 Walk-forward : la période k est jugée avec le réglage choisi sur les périodes 1 à k-1,
 c'est-à-dire sans l'avoir vue. Le réglage final, celui qu'on fige, est choisi sur
 toutes les périodes.
@@ -22,6 +26,7 @@ toutes les périodes.
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -30,9 +35,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from gold_agents.agents.strategy import BuyRule
 from gold_agents.config import TuningGrid
 from gold_agents.simulation.costs import CostModel
 from gold_agents.simulation.fast import (
+    TRADING_DAYS,
     AgentParams,
     FastResult,
     oracle_positions,
@@ -54,7 +61,14 @@ class Combo:
     stop_loss: float
     max_drawdown: float
 
-    def params(self, max_position: float, cooldown_days: int | None) -> AgentParams:
+    def params(
+        self,
+        max_position: float,
+        cooldown_days: int | None,
+        buy_rule: BuyRule = "absolute",
+        quantile_window: int = 250,
+        quantile_min_days: int = 60,
+    ) -> AgentParams:
         return AgentParams(
             self.theta_buy,
             self.theta_sell,
@@ -63,12 +77,20 @@ class Combo:
             self.max_drawdown,
             max_position,
             cooldown_days,
+            buy_rule,
+            quantile_window,
+            quantile_min_days,
         )
 
-    def describe(self) -> str:
+    def describe(self, buy_rule: BuyRule = "absolute") -> str:
         k = "sans filtre" if self.min_confidence is None else f"k {self.min_confidence:g}"
+        buy = (
+            f"θ_buy {self.theta_buy:.2%}"
+            if buy_rule == "absolute"
+            else f"achat au-dessus du quantile {self.theta_buy:.0%} des prévisions passées"
+        )
         return (
-            f"{self.model}, θ_buy {self.theta_buy:.2%}, θ_sell {self.theta_sell:.2%}, {k}, "
+            f"{self.model}, {buy}, θ_sell {self.theta_sell:.2%}, {k}, "
             f"stop-loss {self.stop_loss:.0%}, coupe-circuit {self.max_drawdown:.0%}"
         )
 
@@ -138,6 +160,18 @@ class Simulator:
     max_position: float = 1.0
     cooldown_days: int | None = None
     risk_free_rate: float = 0.0
+    buy_rule: BuyRule = "absolute"
+    quantile_window: int = 250
+    quantile_min_days: int = 60
+
+    def params(self, combo: Combo) -> AgentParams:
+        return combo.params(
+            self.max_position,
+            self.cooldown_days,
+            self.buy_rule,
+            self.quantile_window,
+            self.quantile_min_days,
+        )
 
     def agents(self, m: FoldMarket, combo: Combo, costs_factor: float = 1.0) -> FastResult:
         return simulate_agents(
@@ -145,7 +179,7 @@ class Simulator:
             m.closes,
             m.r_hat[combo.model],
             m.sigma_hat[combo.model],
-            combo.params(self.max_position, self.cooldown_days),
+            self.params(combo),
             self.costs.scaled(costs_factor),
             self.capital,
         )
@@ -183,7 +217,10 @@ def run_grid(
             if combo.model not in m.r_hat:
                 continue
             res = sim.agents(m, combo).metrics(sim.risk_free_rate)
-            rows.append({**asdict(combo), "fold": m.fold, **res})
+            years = len(m.dates) / TRADING_DAYS
+            rows.append(
+                {**asdict(combo), "fold": m.fold, **res, "trades_per_year": res["n_trades"] / years}
+            )
         if log is not None:
             log(f"  période {m.fold} : {len(grid)} réglages simulés")
     table = pd.DataFrame(rows)
@@ -220,9 +257,22 @@ def _neighbour_mean(summary: pd.DataFrame, grid: TuningGrid) -> pd.Series:
     return pd.Series(out, index=summary.index)
 
 
-def summarize_grid(table: pd.DataFrame, grid: TuningGrid, folds: list[int]) -> pd.DataFrame:
-    """Résumé de chaque réglage sur `folds`, trié du meilleur au moins bon."""
+def summarize_grid(
+    table: pd.DataFrame,
+    grid: TuningGrid,
+    folds: list[int],
+    min_trades_per_year: float = 0.0,
+    max_trades_per_year: float | None = None,
+) -> pd.DataFrame:
+    """Résumé de chaque réglage sur `folds`, trié du meilleur au moins bon.
+
+    Ordre : périodes où le nombre de trades est raisonnable, puis périodes où la perte max
+    ne dépasse pas celle de Buy & Hold, puis le score (Sharpe et plateau).
+    """
     part = table[table["fold"].isin(folds)].copy()
+    per_year = part["trades_per_year"] if "trades_per_year" in part else part["n_trades"]
+    high = math.inf if max_trades_per_year is None else max_trades_per_year
+    part["trades_ok"] = (per_year >= min_trades_per_year - 1e-12) & (per_year <= high)
     part["min_confidence"] = part["min_confidence"].astype("object")
     keys = ["model", *PARAMS]
     summary = (
@@ -235,6 +285,7 @@ def summarize_grid(table: pd.DataFrame, grid: TuningGrid, folds: list[int]) -> p
             n_trades=("n_trades", "mean"),
             exposure=("exposure", "mean"),
             dd_ok=("dd_ok", "sum"),
+            trades_ok=("trades_ok", "sum"),
         )
         .reset_index()
     )
@@ -245,7 +296,7 @@ def summarize_grid(table: pd.DataFrame, grid: TuningGrid, folds: list[int]) -> p
     summary["score"] = np.minimum(summary["sharpe"], summary["plateau"])
     summary["n_folds"] = len(folds)
     return summary.sort_values(
-        ["dd_ok", "score", "sharpe"], ascending=[False, False, False]
+        ["trades_ok", "dd_ok", "score", "sharpe"], ascending=[False, False, False, False]
     ).reset_index(drop=True)
 
 
@@ -271,12 +322,15 @@ def walk_forward(
     grid: TuningGrid,
     markets: list[FoldMarket],
     sim: Simulator,
+    min_trades_per_year: float = 0.0,
+    max_trades_per_year: float | None = None,
 ) -> pd.DataFrame:
     """Période k jugée avec le réglage choisi sur les périodes 1 à k-1."""
     rows = []
     folds = [m.fold for m in markets]
     for m in markets[1:]:
-        chosen = best(summarize_grid(table, grid, [f for f in folds if f < m.fold]))
+        past = [f for f in folds if f < m.fold]
+        chosen = best(summarize_grid(table, grid, past, min_trades_per_year, max_trades_per_year))
         res = sim.agents(m, chosen).metrics(sim.risk_free_rate)
         b = bh[bh["fold"] == m.fold].iloc[0]
         rows.append(

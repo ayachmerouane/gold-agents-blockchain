@@ -222,6 +222,20 @@ uv run scripts/verify_ledger.py outputs/ledger/test --anchors ledger/anchors.jso
 - **Prérequis** : la clé privée du registre (`keys/`, sinon refus), `.env` avec le portefeuille Sepolia (sinon `--no-anchor`, inscrit dans le plan).
 - **Sorties** : `outputs/results/final_test/` (`final_table.md` et `.csv` pour le rapport, `metrics.json`, `costs.csv`, `forecast_metrics.csv`, `yearly_returns.csv`, `random_references.csv`, courbes, trades et décisions, figures `final_test.png` et `robustesse_test.png`) et `outputs/ledger/test/*.jsonl`. À versionner après le run : `ledger/anchors.json` et `outputs/ledger/test/`.
 
+### Tentative 2 : seuil d'achat relatif
+
+Résultat de la tentative 1 (30/10) : le système principal (ensemble LSTM + GRU avec confiance) n'a fait **aucun trade**. Son seuil figé, θ_buy = 0,10 %, venait du walk-forward ; mais les modèles réentraînés pour le test prévoient des rendements plus petits (au plus 0,09 %, 0,02 % au milieu). Un seuil en % dépend de l'échelle des prévisions ; il ne se transpose pas d'un réentraînement à l'autre.
+
+Correction, décidée sans regarder le test : **θ_buy devient un quantile** (`buy_rule: quantile`). On achète si r̂ dépasse le quantile θ_buy des prévisions des 250 jours précédents du même modèle (jamais sous 0, et pas d'achat avant 60 jours d'historique). Le quantile est choisi par le même walk-forward 2011-2021, avec une contrainte de plus : **entre 4 et 60 trades par an dans chaque période** (« ni 0, ni des milliers »).
+
+```bash
+uv run gold-agents tune --apply                       # grille de quantiles (prévisions en cache), écrit le réglage dans config.yaml
+uv run gold-agents freeze --again "raison"            # nouveau gel ; l'ancien devient reglages_figes_v1.jsonl
+uv run gold-agents evaluate --frozen-head <hash> --again "raison"   # commande exacte affichée par freeze
+```
+
+Rien n'est effacé : la tentative 1 est archivée dans `outputs/ledger/test_tentative1/` et `outputs/results/final_test_tentative1/`, citée dans le nouveau plan avec la raison. `ledger/moves.json` note chaque déplacement : l'ancrage Sepolia de la tentative 1 reste vérifiable (tableau de bord, `verify_ledger.py --anchors`). Le tableau de bord montre les deux tentatives (sélecteur « Période »).
+
 ## Tableau de bord (phase 9)
 
 ```bash

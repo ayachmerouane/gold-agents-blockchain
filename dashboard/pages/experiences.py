@@ -32,12 +32,25 @@ settings = plan.get("settings") or period.geneses[period.strategies[0]].get("con
 )
 if settings:
     section("Réglages des agents, figés avant le test")
+    relative = settings.get("buy_rule") == "quantile"
     names = {
         "model": ("Modèle de prévision", data.model_label),
-        "theta_buy": (
-            "Seuil d'achat (rendement prévu minimal)",
-            lambda v: f"{v:.2%}".replace(".", ",").replace("%", " %"),
+        "buy_rule": (
+            "Règle d'achat",
+            lambda v: (
+                "relative (quantile des prévisions passées)" if v == "quantile" else "seuil fixe"
+            ),
         ),
+        "theta_buy": (
+            "Seuil d'achat (quantile des prévisions passées)"
+            if relative
+            else "Seuil d'achat (rendement prévu minimal)",
+            (lambda v: f"{v:.0%}".replace("%", " %"))
+            if relative
+            else (lambda v: f"{v:.2%}".replace(".", ",").replace("%", " %")),
+        ),
+        "quantile_window": ("Prévisions passées comparées", lambda v: f"{v} jours"),
+        "quantile_min_days": ("Historique minimal avant d'acheter", lambda v: f"{v} jours"),
         "theta_sell": ("Seuil de vente", lambda v: f"{v:.2%}".replace(".", ",").replace("%", " %")),
         "min_confidence": ("Confiance minimale (|r̂| / σ̂)", fmt),
         "stop_loss": ("Stop-loss", lambda v: f"{v:.0%}".replace("%", " %")),
@@ -65,6 +78,12 @@ if settings:
         )
         if plan.get("planned_at"):
             st.caption(f"Plan du test scellé le {plan['planned_at'][:10]}.")
+        if plan.get("attempt", 1) > 1:
+            st.markdown(
+                f"**Tentative {plan['attempt']}.** Raison inscrite au registre : "
+                f"« {plan.get('reason_again') or 'non précisée'} ». Les tentatives "
+                "précédentes restent consultables (sélecteur « Période »)."
+            )
 
 # --- Hyperparamètres ----------------------------------------------------------------------
 if procedure:
