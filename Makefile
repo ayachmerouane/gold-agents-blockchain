@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard all
+.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard live-init live all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -75,7 +75,13 @@ verify-ledger:    ## Script autonome du professeur sur ledger/ (Python + cryptog
 anchor:           ## Bonus : ancre le dernier hash des registres sur Sepolia (.env et extra anchor requis)
 	uv run --extra anchor gold-agents anchor
 
-dashboard:
-	uv run streamlit run dashboard/app.py
+live-init:        ## Démarre la simulation en direct (modèles figés, plan signé et ancré)
+	uv run gold-agents live-init
+
+live:             ## Simulation en direct : ajoute les nouveaux jours (chaque jour de cotation)
+	uv run gold-agents live
+
+dashboard:        ## Tableau de bord Streamlit (7 pages) sur http://localhost:8501
+	uv run --extra dashboard streamlit run dashboard/app.py
 
 all: data train backtest simulate evaluate verify

@@ -36,6 +36,7 @@ from gold_agents.evaluation.report import GRID, INK, MUTED, RED, Run, _money, _s
 from gold_agents.models.dataset import ForecastData
 from gold_agents.simulation.costs import CostModel
 from gold_agents.simulation.engine import BacktestResult, run_backtest
+from gold_agents.simulation.fast import AgentParams, buy_thresholds
 from gold_agents.simulation.strategies import BuyAndHold, SmaCrossover, Strategy
 
 MAIN = "agents_ensemble_mc"  # le système mis en avant sur le schéma
@@ -119,9 +120,22 @@ def forecast_tables(
     return tables
 
 
+def thresholds(r_hat: np.ndarray, cfg: Config) -> np.ndarray:
+    """Seuil d'achat de chaque jour (constant en règle absolue, glissant en règle relative)."""
+    st = cfg.strategy
+    params = AgentParams(
+        st.theta_buy,
+        st.theta_sell,
+        buy_rule=st.buy_rule,
+        quantile_window=st.quantile_window,
+        quantile_min_days=st.quantile_min_days,
+    )
+    return buy_thresholds(np.asarray(r_hat, dtype="float64"), params)
+
+
 def diagnostics(tables: dict[str, ForecastTable], cfg: Config) -> pd.DataFrame:
     """Ordre de grandeur des prévisions, et part des jours où chaque règle se déclenche."""
-    k, theta = cfg.strategy.min_confidence, cfg.strategy.theta_buy
+    k = cfg.strategy.min_confidence
     rows = {}
     for key, t in tables.items():
         r = t.r_hat
@@ -129,7 +143,7 @@ def diagnostics(tables: dict[str, ForecastTable], cfg: Config) -> pd.DataFrame:
         row = {
             "r̂ médian (%)": f"{np.median(r) * 100:+.3f}",
             "r̂ 5-95 % (%)": f"{q05 * 100:+.3f} / {q95 * 100:+.3f}",
-            "r̂ > θ_buy": f"{np.mean(r > theta):.0%}",
+            "r̂ > θ_buy": f"{np.mean(r > thresholds(r, cfg)):.0%}",
             "r̂ < -θ_sell": f"{np.mean(r < -cfg.strategy.theta_sell):.0%}",
         }
         if t.sigma_hat is not None:
@@ -160,7 +174,14 @@ def build_systems(
         AgentSystem(
             name,
             ForecastAgent(tables[key]),
-            StrategyAgent(st.theta_buy, st.theta_sell, k),
+            StrategyAgent(
+                st.theta_buy,
+                st.theta_sell,
+                k,
+                st.buy_rule,
+                st.quantile_window,
+                st.quantile_min_days,
+            ),
             RiskAgent(
                 rk.max_position, rk.stop_loss, rk.max_drawdown, rk.allow_short, rk.cooldown_days
             ),
@@ -379,7 +400,16 @@ def agents_figure(
                 alpha=0.8,
                 label="r̂ LightGBM",
             )
-        if st.theta_buy:
+        if st.buy_rule != "absolute":
+            ax_fc.plot(
+                days,
+                thresholds(ens.r_hat, cfg) * 100,
+                color=RED,
+                linewidth=0.8,
+                linestyle=":",
+                label=f"seuil d'achat (quantile {st.theta_buy:.0%})",
+            )
+        elif st.theta_buy:
             ax_fc.axhline(st.theta_buy * 100, color=RED, linewidth=0.8, linestyle=":")
         ax_fc.legend(frameon=False, fontsize=8.5, loc="upper left", ncol=2)
     ax_fc.set_title(

@@ -21,7 +21,7 @@ def test_tune_then_freeze(tmp_path: Path, cfg: Config, clean_series: pd.DataFram
     raw["data"]["processed_dir"] = str(tmp_path / "processed")
     raw["models"]["seeds"] = [0]
     raw["tuning"]["grid"] = {
-        "theta_buy": [0.0, 0.0005],
+        "theta_buy": [0.5, 0.8],  # règle relative (config du dépôt) : quantiles
         "theta_sell": [0.0, 0.0005],
         "min_confidence": [None, 0.5],
         "stop_loss": [0.05],
@@ -88,17 +88,17 @@ def test_tune_then_freeze(tmp_path: Path, cfg: Config, clean_series: pd.DataFram
     (out / "chosen.json").write_text(json.dumps(chosen), encoding="utf-8")
 
     settings = chosen["chosen"]
-    raw["strategy"].update(
-        {k: settings[k] for k in ("model", "theta_buy", "theta_sell", "min_confidence")}
-    )
-    raw["strategy"]["theta_buy"] = settings["theta_buy"] + 0.01  # pas encore recopié
-    raw["risk"].update({k: settings[k] for k in ("stop_loss", "max_drawdown", "cooldown_days")})
-    config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert settings["buy_rule"] == "quantile" and settings["theta_buy"] in (0.5, 0.8)
     res = runner.invoke(app, freeze)
-    assert res.exit_code == 1 and "theta_buy" in res.output
+    assert res.exit_code == 1 and "theta_buy" in res.output  # pas encore recopié
 
-    raw["strategy"]["theta_buy"] = settings["theta_buy"]
-    config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    # `tune --apply` recopie le réglage dans la configuration (cache : rapide).
+    res = runner.invoke(app, [*tune, "--quick", "--apply"])
+    assert res.exit_code == 0 and "Écrit dans" in res.output, res.output
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert raw["strategy"]["buy_rule"] == "quantile"
+    chosen["quick"] = False
+    (out / "chosen.json").write_text(json.dumps(chosen), encoding="utf-8")
     key, public = tmp_path / "k.key", tmp_path / "public_key.pem"
     runner.invoke(app, ["keygen", "--key", str(key), "--public-key", str(public)])
     res = runner.invoke(app, [*freeze, "--key", str(key)])
@@ -112,3 +112,19 @@ def test_tune_then_freeze(tmp_path: Path, cfg: Config, clean_series: pd.DataFram
     )
     genesis = block["events"][0]
     assert genesis["kind"] == "FROZEN_SETTINGS" and genesis["settings"] == settings
+    assert genesis["version"] == 1
+
+    # Des réglages figés ne sont jamais écrasés : --again les archive et les cite.
+    res = runner.invoke(app, [*freeze, "--key", str(key)])
+    assert res.exit_code == 1 and "--again" in res.output
+    moves = tmp_path / "moves.json"
+    again = [*freeze, "--key", str(key), "--moves", str(moves), "--again", "essai"]
+    res = runner.invoke(app, again)
+    assert res.exit_code == 0 and "--frozen-head" in res.output, res.output
+    assert (ledgers / "reglages_figes_v1.jsonl").exists()
+    genesis = json.loads(
+        (ledgers / "reglages_figes.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )["events"][0]
+    assert genesis["version"] == 2 and genesis["reason_again"] == "essai"
+    assert genesis["previous_versions"][0]["file"].endswith("reglages_figes_v1.jsonl")
+    assert json.loads(moves.read_text(encoding="utf-8"))[0]["to"].endswith("_v1.jsonl")

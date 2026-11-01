@@ -59,6 +59,8 @@ def test_evaluate_once(tmp_path: Path, cfg: Config, clean_series: pd.DataFrame) 
     raw["models"]["mc_samples"] = 5
     raw["tuning"]["seeds"] = [0]
     raw["tuning"]["random_runs"] = 10
+    # Règle d'achat relative (tentative 2) : quantile 70 % des prévisions passées.
+    raw["strategy"].update(buy_rule="quantile", theta_buy=0.7, min_confidence=None)
     local = Config.model_validate(raw)
     clean_path = tmp_path / "clean.parquet"
     clean_series.to_parquet(clean_path)
@@ -110,6 +112,8 @@ def test_evaluate_once(tmp_path: Path, cfg: Config, clean_series: pd.DataFrame) 
         "--public-key",
         str(public),
         "--no-anchor",
+        "--moves",
+        str(tmp_path / "moves.json"),
     ]
 
     # Un réglage modifié après le gel : refus, et rien n'est écrit.
@@ -200,4 +204,13 @@ def test_evaluate_once(tmp_path: Path, cfg: Config, clean_series: pd.DataFrame) 
     second = read_jsonl(ledgers / "plan.jsonl").blocks[0].events[0]
     assert second["attempt"] == 2 and second["reason_again"] == "essai du test"
     assert second["previous_attempts"][0]["head"] == plan.head.hash
-    assert (ledgers / "plan_tentative1.jsonl").exists()
+    # Rien n'est effacé : la tentative 1 est archivée, registres et résultats.
+    kept = tmp_path / "ledger_tentative1"
+    assert sorted(p.name for p in kept.glob("*.jsonl")) == [p.name for p in files]
+    assert (tmp_path / "final_tentative1" / "metrics.json").exists()
+    moves = json.loads((tmp_path / "moves.json").read_text(encoding="utf-8"))
+    assert len(moves) == 11 and all("ledger_tentative1" in m["to"] for m in moves)
+    # Les agents ont bien tradé avec la règle relative, et le registre le dit.
+    assert by_name["agents_ensemble"]["n_trades"] > 0
+    blocks = (ledgers / "agents_ensemble.jsonl").read_text(encoding="utf-8")
+    assert "quantile 70%" in blocks

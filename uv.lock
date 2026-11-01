@@ -2030,7 +2030,7 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.4" },
     { name = "statsmodels", marker = "extra == 'eda'", specifier = ">=0.14" },
     { name = "statsmodels", marker = "extra == 'ml'", specifier = ">=0.14" },
-    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.33" },
+    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.50" },
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.2" },
     { name = "typer", specifier = ">=0.12" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },

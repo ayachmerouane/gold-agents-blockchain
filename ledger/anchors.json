@@ -131,5 +131,92 @@
         "head": "000257cb8ad797ad0b9c8a674dd82c686bebe8bdf3f53a8994b635a7b264a7db"
       }
     ]
+  },
+  {
+    "anchored_at": "2026-11-01T02:17:36+00:00",
+    "network": "sepolia",
+    "chain_id": 11155111,
+    "tx_hash": "0xcb3fdb9d3ca6647d4321f5cfadfeefef160689f1b1f22d0931ae502797d2d4be",
+    "block_number": 12037954,
+    "sender": "0x9Ed35Fdbb7a34A632a821301DD3c94B64Ffefb2B",
+    "digest": "6afae61b44c34d58959f2790b19966fbb26929b8f80b1246b464e0217592cf9b",
+    "ledgers": [
+      {
+        "file": "outputs/ledger/test/plan.jsonl",
+        "blocks": 1,
+        "head": "0007b61ed92c8190d79d85ef4b2b76af0cf6a6a1fcea99cb9f792b0f87f2b1de"
+      },
+      {
+        "file": "outputs/ledger/reglages_figes.jsonl",
+        "blocks": 1,
+        "head": "000999d7aebc875da4c1ee1d97d692a26f2409a96c66d7885886aef43c46cba6"
+      }
+    ]
+  },
+  {
+    "anchored_at": "2026-11-01T02:25:48+00:00",
+    "network": "sepolia",
+    "chain_id": 11155111,
+    "tx_hash": "0xbfce00e55c594b9b376c2da519a4fd83e8631f38c6a72d65dfbdb32349fb48f4",
+    "block_number": 12037994,
+    "sender": "0x9Ed35Fdbb7a34A632a821301DD3c94B64Ffefb2B",
+    "digest": "6ecc089a58b04e6219427f0be593b8fab6df68c3194285477008cfd6bb048968",
+    "ledgers": [
+      {
+        "file": "outputs/ledger/test/plan.jsonl",
+        "blocks": 1,
+        "head": "0007b61ed92c8190d79d85ef4b2b76af0cf6a6a1fcea99cb9f792b0f87f2b1de"
+      },
+      {
+        "file": "outputs/ledger/test/buy_and_hold.jsonl",
+        "blocks": 1054,
+        "head": "00067788600301606bb0d09ed8d5d134f6380db19f65858a664820605275ac34"
+      },
+      {
+        "file": "outputs/ledger/test/sma_20_50.jsonl",
+        "blocks": 1054,
+        "head": "000c8558a776f54545324aef36ab861e7d693e325015d3d7ed35b2414c65c8aa"
+      },
+      {
+        "file": "outputs/ledger/test/agents_lstm.jsonl",
+        "blocks": 1054,
+        "head": "0003c07ccdd65c2c73c4daa1f688a2cee48c7aaf19ae61ba71ba8202bb16bf55"
+      },
+      {
+        "file": "outputs/ledger/test/agents_gru.jsonl",
+        "blocks": 1054,
+        "head": "00028931ad775d47ade38ed5730c50bcd7fbf3a5fa3de7f489c3704ff1f5a49d"
+      },
+      {
+        "file": "outputs/ledger/test/agents_ensemble.jsonl",
+        "blocks": 1054,
+        "head": "0000384f291c72bf9f74e282a786b95d89d9f56e73560a6062e0fbc12c407556"
+      },
+      {
+        "file": "outputs/ledger/test/agents_ensemble_mc.jsonl",
+        "blocks": 1054,
+        "head": "0000a68a5e63de74d8a7a76f4e18de2b7bd5603cd28514de7e6af2af549aea5a"
+      },
+      {
+        "file": "outputs/ledger/test/agents_lightgbm.jsonl",
+        "blocks": 1054,
+        "head": "000ac30ac3a3fe4235cb8b29ef7d570667afe880e28f2281a07ea9952d927d8c"
+      },
+      {
+        "file": "outputs/ledger/test/aleatoire.jsonl",
+        "blocks": 1054,
+        "head": "0007fe2d56148f130eb44ad5554338339f20c9de0646b1588ac41f369333e247"
+      },
+      {
+        "file": "outputs/ledger/test/oracle.jsonl",
+        "blocks": 1054,
+        "head": "00094f3963f896ccb3e6a632e38ebac77f3b23b922ac3ddc93e344c0897f1df5"
+      },
+      {
+        "file": "outputs/ledger/test/resultats.jsonl",
+        "blocks": 1,
+        "head": "0009f184ba5030b7b586bdd54caa93ac6475cbab9346fbf9739bc4e0b00acb42"
+      }
+    ]
   }
 ]

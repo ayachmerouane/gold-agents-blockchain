@@ -222,6 +222,57 @@ uv run scripts/verify_ledger.py outputs/ledger/test --anchors ledger/anchors.jso
 - **Prérequis** : la clé privée du registre (`keys/`, sinon refus), `.env` avec le portefeuille Sepolia (sinon `--no-anchor`, inscrit dans le plan).
 - **Sorties** : `outputs/results/final_test/` (`final_table.md` et `.csv` pour le rapport, `metrics.json`, `costs.csv`, `forecast_metrics.csv`, `yearly_returns.csv`, `random_references.csv`, courbes, trades et décisions, figures `final_test.png` et `robustesse_test.png`) et `outputs/ledger/test/*.jsonl`. À versionner après le run : `ledger/anchors.json` et `outputs/ledger/test/`.
 
+### Tentative 2 : seuil d'achat relatif
+
+Résultat de la tentative 1 (30/10) : le système principal (ensemble LSTM + GRU avec confiance) n'a fait **aucun trade**. Son seuil figé, θ_buy = 0,10 %, venait du walk-forward ; mais les modèles réentraînés pour le test prévoient des rendements plus petits (au plus 0,09 %, 0,02 % au milieu). Un seuil en % dépend de l'échelle des prévisions ; il ne se transpose pas d'un réentraînement à l'autre.
+
+Correction, décidée sans regarder le test : **θ_buy devient un quantile** (`buy_rule: quantile`). On achète si r̂ dépasse le quantile θ_buy des prévisions des 250 jours précédents du même modèle (jamais sous 0, et pas d'achat avant 60 jours d'historique). Le quantile est choisi par le même walk-forward 2011-2021, avec une contrainte de plus : **entre 4 et 60 trades par an dans chaque période** (« ni 0, ni des milliers »).
+
+```bash
+uv run gold-agents tune --apply                       # grille de quantiles (prévisions en cache), écrit le réglage dans config.yaml
+uv run gold-agents freeze --again "raison"            # nouveau gel ; l'ancien devient reglages_figes_v1.jsonl
+uv run gold-agents evaluate --frozen-head <hash> --again "raison"   # commande exacte affichée par freeze
+```
+
+Rien n'est effacé : la tentative 1 est archivée dans `outputs/ledger/test_tentative1/` et `outputs/results/final_test_tentative1/`, citée dans le nouveau plan avec la raison. `ledger/moves.json` note chaque déplacement : l'ancrage Sepolia de la tentative 1 reste vérifiable (tableau de bord, `verify_ledger.py --anchors`). Le tableau de bord montre les deux tentatives (sélecteur « Période »).
+
+## Simulation en direct (paper trading)
+
+Pour juger le système sur des prix **qui n'existaient pas encore** quand il a décidé, on le
+fait tourner jour après jour sur les nouvelles cotations, avec **la même règle gelée que le
+test** (celle du dernier `freeze`, par exemple le seuil relatif de la tentative 2) :
+`live-init` refuse de démarrer si la config ne correspond pas à ce gel.
+
+```bash
+uv run gold-agents live-init        # 1 fois : données à jour, modèles figés, plan signé et ancré
+uv run gold-agents live             # chaque jour de cotation, après minuit UTC
+```
+
+- `live-init` réentraîne LSTM et GRU (3 graines) sur tout l'historique, scelle dans le
+  bloc genèse la règle gelée, le SHA-256 de chaque poids, les données et le commit, puis
+  inscrit et ancre la décision du dernier jour connu. Les 250 dernières prévisions de
+  l'arrêt anticipé servent d'historique au seuil relatif dès le premier jour.
+- `live` met à jour les données (Twelve Data), refuse de continuer si un poids a changé,
+  puis, pour chaque nouveau jour : exécute l'ordre de la veille à l'ouverture, valorise à
+  la clôture, décide pour le lendemain, signe le bloc et ancre la tête sur Sepolia.
+  Buy & Hold (achat le premier jour) est suivi dans le même bloc, comme référence.
+- Une décision est **à temps** si la barre du jour suivant n'existait pas encore quand
+  elle a été écrite. Un jour manqué est rattrapé (même résultat, tout est figé) mais
+  marqué **en retard**.
+- Registre : `outputs/ledger/live/agents_live.jsonl` ; page « Simulation en direct » du
+  tableau de bord. Options : `--no-update`, `--no-anchor`.
+
+## Tableau de bord (phase 9)
+
+```bash
+uv sync --extra dev --extra dashboard     # Streamlit et Plotly (une fois)
+make dashboard                            # puis ouvrir http://localhost:8501
+```
+
+- **Ne calcule rien** : il lit les registres de `outputs/ledger/<période>/` (versionnés pour le test : un simple clone suffit), `ledger/` (clé publique, ancrages) et, s'ils existent, `outputs/results/` et `mlruns/mlflow.db`. La période (test final, validation…) se choisit dans la barre latérale.
+- **Six pages** : *Vue d'ensemble* (indicateurs du système choisi, tableau comparatif, robustesse aux frais, comparaison au hasard), *Prévisions* (prix et rendement réels contre prévus, bande d'incertitude, MAE/RMSE contre B0), *Portefeuille* (valeur, drawdown, exposition), *Décisions* (achats et ventes sur le prix, règle de l'agent risque, journal filtrable et exportable), *Blockchain* (explorateur de blocs, vérification de tous les registres, démo de falsification sur une copie en mémoire, état des ancrages Sepolia avec lien Etherscan), *Expériences* (réglages figés, hyperparamètres retenus, runs MLflow, figures).
+- La logique de lecture est dans `src/gold_agents/dashboard/data.py` (testée sans Streamlit) ; `dashboard/` ne fait qu'afficher.
+
 ## Commandes
 
 | Commande | Rôle |
@@ -247,7 +298,7 @@ uv run scripts/verify_ledger.py outputs/ledger/test --anchors ledger/anchors.jso
 | `make verify` | Vérification des registres de `outputs/ledger/` (signatures avec `ledger/public_key.pem`) |
 | `make verify-ledger` | Script autonome `scripts/verify_ledger.py` sur `ledger/` |
 | `make anchor` | Bonus : ancre le dernier hash des registres sur Sepolia (`.env` requis) |
-| `make dashboard` | Tableau de bord Streamlit |
+| `make dashboard` | Tableau de bord Streamlit (6 pages, http://localhost:8501) |
 | `make all` | Chaîne complète |
 
 La CLI est aussi accessible directement : `uv run gold-agents --help`.

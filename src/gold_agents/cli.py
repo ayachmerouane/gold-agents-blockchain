@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -9,13 +10,14 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from gold_agents.config import DEFAULT_CONFIG_PATH, load_config
+from gold_agents.config import DEFAULT_CONFIG_PATH, apply_settings, load_config
 from gold_agents.data import clean as cleaning
 from gold_agents.data import sources, update
 from gold_agents.data.load import read_kaggle_csv, read_update_csv
 
 if TYPE_CHECKING:
     from gold_agents.blockchain.signing import Signer
+    from gold_agents.config import Config
 
 app = typer.Typer(help="Investissement simulé sur l'or : DL, agents et blockchain.")
 
@@ -80,7 +82,11 @@ def update_data(
     force: bool = typer.Option(False, "--force", help="Ajouter même si le contrôle échoue."),
 ) -> None:
     """Ajoute les jours manquants depuis la fin du CSV Kaggle (fichier séparé)."""
-    cfg = load_config(config)
+    _update(load_config(config), source, overlap_days, force)
+
+
+def _update(cfg: Config, source: UpdateSource, overlap_days: int = 60, force: bool = False) -> None:
+    """Ajoute les jours clôturés manquants (Twelve Data ou yfinance) ; Exit en cas d'échec."""
     if not cfg.data.raw_path.exists():
         typer.echo(f"{cfg.data.raw_path} absent : lancer d'abord `make download`.", err=True)
         raise typer.Exit(code=1)
@@ -411,9 +417,11 @@ def simulate(
     tables = ar.forecast_tables(cfg, data, split, models_dir, forecast_dir)
     start, end = ar.simulation_period(frame, split)
     st = cfg.strategy
+    k = "sans filtre" if st.min_confidence is None else f"{st.min_confidence:g}"
+    rule = "" if st.buy_rule == "absolute" else " (quantile des prévisions passées)"
     typer.echo(
         f"Période {split} : du {start} au {end}, frais x {costs_factor:g}. Stratégie : "
-        f"θ_buy {st.theta_buy:g}, θ_sell {st.theta_sell:g}, confiance k = {st.min_confidence:g}."
+        f"θ_buy {st.theta_buy:g}{rule}, θ_sell {st.theta_sell:g}, confiance k = {k}."
     )
     typer.echo("\nPrévisions des modèles (agent de prévision) :")
     typer.echo(ar.diagnostics(tables, cfg).to_string())
@@ -454,6 +462,11 @@ def tune(
     ),
     quick: bool = typer.Option(
         False, "--quick", help="Essai rapide : 1 graine, 5 époques (vérifie la chaîne)."
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Écrire le réglage choisi dans config.yaml (sections strategy, risk).",
     ),
 ) -> None:
     """Phase 6 : réglage des agents sur une grille, en walk-forward (le test n'est pas lu)."""
@@ -551,21 +564,36 @@ def tune(
     typer.echo("Part de jours en hausse : " + "  ".join(f"{f}: {v:.1%}" for f, v in share.items()))
 
     sim_cfg = cfg.simulation
+    st_cfg = cfg.strategy
     sim = tu.Simulator(
         CostModel(sim_cfg.fee_rate, sim_cfg.slippage),
         sim_cfg.initial_capital,
         cfg.risk.max_position,
         cfg.risk.cooldown_days,
         sim_cfg.risk_free_rate,
+        tc.buy_rule,
+        st_cfg.quantile_window,
+        st_cfg.quantile_min_days,
     )
+    limits = (tc.min_trades_per_year, tc.max_trades_per_year)
     markets = tu.fold_markets(frame, forecasts, list(tc.folds))
     grid = tu.combos(tc.grid)
-    typer.echo(f"\nGrille : {len(grid)} réglages x {len(markets)} périodes.")
+    rule_text = (
+        "θ_buy = rendement prévu minimal"
+        if tc.buy_rule == "absolute"
+        else f"θ_buy = quantile des {st_cfg.quantile_window} prévisions précédentes"
+    )
+    typer.echo(f"\nGrille : {len(grid)} réglages x {len(markets)} périodes ({rule_text}).")
+    if tc.min_trades_per_year or tc.max_trades_per_year:
+        typer.echo(
+            f"Contrainte : entre {tc.min_trades_per_year:g} et "
+            f"{tc.max_trades_per_year or '∞'} trades par an dans chaque période."
+        )
     table, bh = tu.run_grid(markets, grid, sim)
     folds = [m.fold for m in markets]
-    summary = tu.summarize_grid(table, tc.grid, folds)
+    summary = tu.summarize_grid(table, tc.grid, folds, *limits)
     chosen = tu.best(summary)
-    walk = tu.walk_forward(table, bh, tc.grid, markets, sim)
+    walk = tu.walk_forward(table, bh, tc.grid, markets, sim, *limits)
     costs = tu.costs_sensitivity(markets, chosen, sim, list(tc.costs_factors))
     refs, draws = tu.references(markets, chosen, sim, 20 if quick else tc.random_runs, cfg.seed)
 
@@ -577,11 +605,18 @@ def tune(
     table_fc = ForecastTable(
         chosen.model, fc_days, last.r_hat[chosen.model][ok], None if sig is None else sig[ok]
     )
-    p = chosen.params(cfg.risk.max_position, cfg.risk.cooldown_days)
+    p = sim.params(chosen)
     system = AgentSystem(
         "agents_regles",
         ForecastAgent(table_fc),
-        StrategyAgent(p.theta_buy, p.theta_sell, p.min_confidence),
+        StrategyAgent(
+            p.theta_buy,
+            p.theta_sell,
+            p.min_confidence,
+            p.buy_rule,
+            p.quantile_window,
+            p.quantile_min_days,
+        ),
         RiskAgent(p.max_position, p.stop_loss, p.max_drawdown, False, p.cooldown_days),
         ExecutionAgent(sim.costs),
     )
@@ -599,17 +634,21 @@ def tune(
     diag.to_csv(out_dir / "forecast_diagnostics.csv", index=False)
     grid_sha = hashlib.sha256((out_dir / "grid.csv").read_bytes()).hexdigest()
     best_row = summary.iloc[0]
+    settings = tr.chosen_settings(
+        chosen,
+        cfg.risk.cooldown_days,
+        tc.buy_rule,
+        st_cfg.quantile_window,
+        st_cfg.quantile_min_days,
+    )
     (out_dir / "chosen.json").write_text(
         json.dumps(
             {
-                "chosen": {
-                    "model": chosen.model,
-                    "theta_buy": chosen.theta_buy,
-                    "theta_sell": chosen.theta_sell,
-                    "min_confidence": chosen.min_confidence,
-                    "stop_loss": chosen.stop_loss,
-                    "max_drawdown": chosen.max_drawdown,
-                    "cooldown_days": cfg.risk.cooldown_days,
+                "chosen": settings,
+                "trades_ok_folds": f"{int(best_row['trades_ok'])}/{len(folds)}",
+                "trades_per_year": {
+                    "min": tc.min_trades_per_year,
+                    "max": tc.max_trades_per_year,
                 },
                 "mean_sharpe": float(best_row["sharpe"]),
                 "plateau_sharpe": float(best_row["plateau"]),
@@ -648,10 +687,19 @@ def tune(
         f"\nContrôle moteur complet sur la dernière période : "
         f"{'identique' if same else 'DIFFÉRENT'} ({fast_value:.2f} / {full_value:.2f})"
     )
-    typer.echo(f"\nRéglage choisi : {chosen.describe()}")
-    typer.echo(
-        "À recopier dans config/config.yaml :\n" + tr.yaml_snippet(chosen, cfg.risk.cooldown_days)
-    )
+    typer.echo(f"\nRéglage choisi : {chosen.describe(tc.buy_rule)}")
+    if apply:
+        changed = apply_settings(config, settings)
+        typer.echo(
+            f"Écrit dans {config} : "
+            + (", ".join(changed) if changed else "rien à changer (déjà à jour)")
+            + ". Étape suivante : `uv run gold-agents freeze`."
+        )
+    else:
+        typer.echo(
+            f"À recopier dans {config} (ou relancer avec --apply) :\n"
+            + tr.yaml_snippet(chosen, cfg.risk.cooldown_days, tc.buy_rule)
+        )
     typer.echo(
         f"Schéma : {figure}\nRésultats : {out_dir}  ({time.perf_counter() - start_time:.0f} s)"
     )
@@ -664,21 +712,34 @@ TUNING_DIR_OPTION = typer.Option(
 )
 
 
+MOVES_OPTION = typer.Option(
+    Path("ledger/moves.json"),
+    "--moves",
+    help="Journal des registres archivés (versionné) : l'ancrage reste vérifiable.",
+)
+
+
 @app.command()
 def freeze(
     config: Path = CONFIG_OPTION,
     tuning_dir: Path = TUNING_DIR_OPTION,
     ledger_dir: Path = LEDGER_DIR_OPTION,
     key: Path = PRIVATE_KEY_OPTION,
+    again: str = typer.Option(
+        "", "--again", help="Refiger des réglages déjà figés : raison, inscrite dans le registre."
+    ),
+    moves_path: Path = MOVES_OPTION,
 ) -> None:
     """Fige les réglages : les compare à `tune`, puis les scelle dans un bloc genèse."""
     import hashlib
     import json
 
+    from gold_agents.blockchain.archive import archive_file
     from gold_agents.blockchain.chain import Chain
     from gold_agents.blockchain.storage import read_jsonl, write_jsonl
     from gold_agents.data.prepare import FEATURES_FILE
     from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation import final as fe
 
     cfg = load_config(config)
     chosen_path = tuning_dir / "chosen.json"
@@ -691,30 +752,56 @@ def freeze(
             "Les résultats viennent de `tune --quick` : relancer `tune` en entier.", err=True
         )
         raise typer.Exit(code=1)
-    st, rk = cfg.strategy, cfg.risk
-    current = {
-        "model": st.model,
-        "theta_buy": st.theta_buy,
-        "theta_sell": st.theta_sell,
-        "min_confidence": st.min_confidence,
-        "stop_loss": rk.stop_loss,
-        "max_drawdown": rk.max_drawdown,
-        "cooldown_days": rk.cooldown_days,
+    current = fe.current_settings(cfg)
+    keys = set(current) | set(chosen["chosen"])
+    diff = {
+        k: (current.get(k), chosen["chosen"].get(k))
+        for k in sorted(keys)
+        if current.get(k) != chosen["chosen"].get(k)
     }
-    diff = {k: (current[k], v) for k, v in chosen["chosen"].items() if current[k] != v}
     if diff:
         for k, (a, b) in diff.items():
             typer.echo(f"  {k} : config {a!r}, tune {b!r}", err=True)
-        typer.echo("La configuration ne correspond pas au réglage choisi par `tune`.", err=True)
+        typer.echo(
+            "La configuration ne correspond pas au réglage choisi par `tune` "
+            "(`uv run gold-agents tune --apply` l'écrit dans la configuration).",
+            err=True,
+        )
         raise typer.Exit(code=1)
     grid = tuning_dir / "grid.csv"
     if hashlib.sha256(grid.read_bytes()).hexdigest() != chosen["grid_sha256"]:
         typer.echo(f"{grid} a changé depuis `tune`.", err=True)
         raise typer.Exit(code=1)
+
+    # Des réglages déjà figés ne sont jamais écrasés : archivés, et cités dans le nouveau.
+    target = ledger_dir / "reglages_figes.jsonl"
+    previous: list[dict[str, object]] = []
+    version = 1
+    if target.exists():
+        if not again:
+            typer.echo(
+                f"{target} existe déjà : des réglages sont figés. Pour en figer de nouveaux, "
+                '--again "raison" (l\'ancien registre est archivé et cité).',
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        old = read_jsonl(target)
+        old_genesis = old.blocks[0].events[0]
+        version = int(old_genesis.get("version", 1)) + 1
+        kept = archive_file(
+            target, target.with_name(f"reglages_figes_v{version - 1}.jsonl"), moves_path
+        )
+        previous = [
+            *old_genesis.get("previous_versions", []),
+            {"file": kept.as_posix(), "head": old.head.hash, "settings": old_genesis["settings"]},
+        ]
     events = [
         {
             "type": "GENESIS",
             "kind": "FROZEN_SETTINGS",
+            "version": version,
+            "previous_versions": previous,
+            "reason_again": again or None,
             "frozen_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "settings": current,
             "config": json.loads(cfg.model_dump_json()),
@@ -724,11 +811,16 @@ def freeze(
         }
     ]
     signer = _ledger_signer(key)
-    path = write_jsonl(Chain.start(events, signer), ledger_dir / "reglages_figes.jsonl")
+    path = write_jsonl(Chain.start(events, signer), target)
     chain = read_jsonl(path)
     verification = chain.verify(signer.public_key if signer else None)
-    typer.echo(f"Réglages figés dans {path} : {verification.describe()}.")
+    typer.echo(f"Réglages figés (version {version}) dans {path} : {verification.describe()}.")
     typer.echo(f"Empreinte du bloc genèse : {chain.head.hash}")
+    if version > 1:
+        typer.echo(
+            "Pour lancer le test avec ces réglages :\n"
+            f'  uv run gold-agents evaluate --frozen-head {chain.head.hash} --again "raison"'
+        )
 
 
 LEDGERS_ARGUMENT = typer.Argument(None, help="Fichiers .jsonl (défaut : outputs/ledger/).")
@@ -816,6 +908,7 @@ def evaluate(
     again: str = typer.Option(
         "", "--again", help="Relancer un test déjà lancé : raison, inscrite dans le registre."
     ),
+    moves_path: Path = MOVES_OPTION,
 ) -> None:
     """Phase 8 : un seul run sur le test, toutes les stratégies, registres signés et ancrés."""
     import json
@@ -896,30 +989,42 @@ def evaluate(
             raise typer.Exit(code=1) from exc
 
     # 2. Un seul run : un plan déjà écrit veut dire que le test a déjà été lancé.
+    # Une nouvelle tentative n'efface rien : les registres de la précédente sont archivés
+    # dans `<dossier>_tentativeN/` (déplacements notés dans ledger/moves.json, l'ancrage
+    # reste vérifiable) et cités dans le nouveau plan avec la raison.
+    from gold_agents.blockchain.archive import archive_file
+
     plan_path = ledgers / fe.PLAN_FILE
+    archived = sorted(
+        ledgers.parent.glob(f"{ledgers.name}_tentative*"),
+        key=lambda d: int(d.name.rsplit("tentative", 1)[1] or 0),
+    )
     previous: list[dict[str, object]] = []
-    if plan_path.exists() and not rehearsal:
-        old = read_jsonl(plan_path)
-        old_plan = old.blocks[0].events[0]
+    for d in archived:
+        if (d / fe.PLAN_FILE).exists():
+            previous.append(
+                {"ledgers": d.as_posix(), "head": read_jsonl(d / fe.PLAN_FILE).head.hash}
+            )
+    if (plan_path.exists() or previous) and not rehearsal:
         if not again:
+            done = len(previous) + plan_path.exists()
             typer.echo(
-                f"Le test a déjà été lancé (plan {old.head.hash[:16]}…, tentative "
-                f"{old_plan.get('attempt', 1)}). Le principe : un seul run. Pour relancer "
-                'quand même, --again "raison" ; la raison et l\'ancien plan sont inscrits '
-                "dans le nouveau registre.",
+                f"Le test a déjà été lancé ({done} tentative(s)). Le principe : un seul run. "
+                'Pour relancer quand même, --again "raison" ; les registres de la tentative '
+                "précédente sont archivés, et la raison est inscrite dans le nouveau plan.",
                 err=True,
             )
             raise typer.Exit(code=1)
-        n = int(old_plan.get("attempt", 1))
-        kept = plan_path.with_name(f"plan_tentative{n}.jsonl")
-        plan_path.replace(kept)
-        previous = [
-            *old_plan.get("previous_attempts", []),
-            {
-                "plan": str(kept),
-                "head": old.head.hash,
-            },
-        ]
+        if plan_path.exists():
+            n = len(previous) + 1
+            kept_dir = ledgers.with_name(f"{ledgers.name}_tentative{n}")
+            head = read_jsonl(plan_path).head.hash
+            for f in sorted(ledgers.glob("*.jsonl")):
+                archive_file(f, kept_dir / f.name, moves_path)
+            if out.is_dir():
+                out.replace(out.with_name(f"{out.name}_tentative{n}"))
+            previous.append({"ledgers": kept_dir.as_posix(), "head": head})
+            typer.echo(f"Tentative {n} archivée dans {kept_dir} (rien n'est effacé).")
 
     start_time = time.perf_counter()
     frame, scaler = load_prepared(cfg.data.processed_dir)
@@ -1235,6 +1340,294 @@ def anchor(
     path = anchoring.append_anchor(done, anchors_path)
     typer.echo(f"Ancré dans le bloc {done.block_number} : {anchoring.etherscan_url(done.tx_hash)}")
     typer.echo(f"Ancrage ajouté à {path} (à versionner).")
+
+
+# --- Simulation en direct (paper trading) ---------------------------------------------
+
+LIVE_LEDGER_OPTION = typer.Option(
+    Path("outputs/ledger/live"), "--ledger-dir", help="Dossier du registre en direct."
+)
+LIVE_MODELS_OPTION = typer.Option(
+    Path("outputs/models/live"), "--live-models", help="Modèles figés de la simulation en direct."
+)
+
+
+def _rule_text(s: dict[str, object]) -> str:
+    if s.get("buy_rule") == "quantile":
+        return (
+            f"achat si r̂ dépasse le quantile {s['theta_buy']:.0%} des "
+            f"{s['quantile_window']} prévisions précédentes, vente si r̂ < -{s['theta_sell']:g}"
+        )
+    return f"achat si r̂ > {s['theta_buy']:g}, vente si r̂ < -{s['theta_sell']:g}"
+
+
+def _live_signer(key: Path) -> Signer:
+    signer = _ledger_signer(key)
+    if signer is None:
+        typer.echo("La simulation en direct exige un registre signé.", err=True)
+        raise typer.Exit(code=1)
+    return signer
+
+
+def _check_anchor_env(env: Path) -> None:
+    from gold_agents.blockchain import anchor as anchoring
+
+    try:
+        anchoring.read_env(env)
+        import web3  # noqa: F401
+    except KeyError as exc:
+        typer.echo(f"{exc.args[0]} (ou --no-anchor).", err=True)
+        raise typer.Exit(code=1) from exc
+    except ImportError as exc:
+        typer.echo("web3 absent : `uv sync --all-extras` (ou --no-anchor).", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _live_report(reports: Sequence[object]) -> None:
+    from gold_agents.live.session import DayReport
+
+    labels = {"BUY": "ACHAT", "SELL": "VENTE", "HOLD": "attente"}
+    for r in reports:
+        assert isinstance(r, DayReport)
+        done = f", exécuté : {r.trade.side} à {r.trade.price:,.2f}" if r.trade else ""
+        seuil = "" if r.threshold is None else f" (seuil d'achat {r.threshold:+.3%})"
+        r_hat = "pas de prévision" if r.r_hat is None else f"r̂ {r.r_hat:+.3%}{seuil}"
+        action = labels.get(r.order.action.value, r.order.action.value)
+        if not r.order.executable:
+            action = "attente"
+        typer.echo(
+            f"  {r.day} {'à temps   ' if r.on_time else 'EN RETARD '} {r_hat} -> {action} "
+            f"({r.order.rule}){done}. Valeur {r.value:,.0f} $, Buy & Hold {r.bh_value:,.0f} $"
+        )
+
+
+def _save_live(
+    chain: object,
+    path: Path,
+    public_key: Path,
+    anchor: bool,
+    env: Path,
+    anchors_path: Path,
+) -> None:
+    from gold_agents.blockchain.chain import Chain
+    from gold_agents.blockchain.signing import load_public_key
+    from gold_agents.blockchain.storage import read_jsonl, write_jsonl
+
+    assert isinstance(chain, Chain)
+    write_jsonl(chain, path)
+    key = load_public_key(public_key) if public_key.exists() else None
+    result = read_jsonl(path).verify(key)
+    typer.echo(f"Registre {path} : {result.describe()}.")
+    if not result.valid:
+        raise typer.Exit(code=1)
+    if not anchor:
+        typer.echo("Pas d'ancrage Sepolia (--no-anchor).")
+        return
+    try:
+        _anchor_ledgers([path], env, anchors_path, public_key)
+    except Exception as exc:
+        typer.echo(
+            f"Ancrage impossible ({exc}). Le registre est écrit : relancer l'ancrage avec "
+            f"`uv run gold-agents anchor {path.as_posix()}` avant la prochaine clôture.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("live-init")
+def live_init(
+    config: Path = CONFIG_OPTION,
+    source: UpdateSource = SOURCE_OPTION,
+    no_update: bool = typer.Option(False, "--no-update", help="Ne pas appeler l'API avant."),
+    models_dir: Path = MODELS_DIR_OPTION,
+    live_models: Path = LIVE_MODELS_OPTION,
+    ledger_dir: Path = LIVE_LEDGER_OPTION,
+    frozen: Path = FROZEN_OPTION,
+    key: Path = PRIVATE_KEY_OPTION,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    env: Path = ENV_OPTION,
+    anchors_path: Path = ANCHORS_OPTION,
+    no_anchor: bool = typer.Option(False, "--no-anchor", help="Ne pas ancrer sur Sepolia."),
+    quick: bool = typer.Option(False, "--quick", help="1 graine, 5 époques (vérifie la chaîne)."),
+    again: str = typer.Option(
+        "", "--again", help="Repartir de zéro : raison, inscrite dans le nouveau registre."
+    ),
+) -> None:
+    """Démarre la simulation en direct : modèles figés, plan signé et ancré, premier jour."""
+    import time
+
+    from gold_agents.blockchain.chain import Chain
+    from gold_agents.blockchain.storage import read_jsonl
+    from gold_agents.config import LiveConfig
+    from gold_agents.evaluation.final import current_settings
+    from gold_agents.live import session as ls
+    from gold_agents.models import walk_forward as wf
+
+    cfg = load_config(config)
+    live = cfg.live or LiveConfig()
+    if quick:
+        live = live.model_copy(update={"seeds": live.seeds[:1]})
+    path = ledger_dir / ls.LEDGER_FILE
+    previous: list[dict[str, object]] = []
+    if path.exists():
+        if not again:
+            typer.echo(
+                f"La simulation en direct a déjà démarré ({path}). Chaque jour : "
+                '`uv run gold-agents live`. Pour repartir de zéro : --again "raison".',
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        old = read_jsonl(path)
+        n = len(list(ledger_dir.glob("agents_live_tentative*.jsonl"))) + 1
+        kept = path.with_name(f"agents_live_tentative{n}.jsonl")
+        path.replace(kept)
+        previous = [{"ledger": kept.as_posix(), "head": old.head.hash, "blocks": len(old)}]
+    if not all((models_dir / k / "model.json").exists() for k in ls.KINDS):
+        typer.echo("Hyperparamètres de la phase 4 absents : `uv run gold-agents train`.", err=True)
+        raise typer.Exit(code=1)
+    signer = _live_signer(key)
+    anchor = not no_anchor
+    if anchor:
+        _check_anchor_env(env)
+    # Une seule règle gelée : celle du dernier `freeze`, la même que pour le test.
+    if not frozen.exists():
+        typer.echo(f"{frozen} absent : `uv run gold-agents freeze` d'abord.", err=True)
+        raise typer.Exit(code=1)
+    frozen_chain = read_jsonl(frozen)
+    frozen_head = frozen_chain.head.hash
+    frozen_settings = dict(frozen_chain.blocks[0].events[0].get("settings", {}))
+    diff = {
+        k: (v, frozen_settings.get(k))
+        for k, v in current_settings(cfg).items()
+        if frozen_settings.get(k) != v
+    }
+    if diff:
+        for k, (now, then) in diff.items():
+            typer.echo(f"  REFUS : {k} vaut {now!r} dans la config, {then!r} au gel.", err=True)
+        typer.echo("La règle de la config n'est pas celle du dernier gel : rien n'a démarré.")
+        raise typer.Exit(code=1)
+
+    if not no_update:
+        _update(cfg, source)
+    frame = ls.live_frame(cfg)
+    last = frame["date"].iloc[-1].date()
+    typer.echo(
+        f"\nDonnées jusqu'au {last} ({len(frame)} jours). Entraînement des modèles figés : "
+        f"LSTM + GRU, {len(live.seeds)} graine(s), sur tout ce qui précède."
+    )
+    start = time.perf_counter()
+    if live_models.exists():
+        import shutil
+
+        shutil.rmtree(live_models)
+    training = ls.train_models(
+        frame,
+        cfg,
+        live,
+        wf.read_network_meta(models_dir),
+        live_models,
+        5 if quick else cfg.models.max_epochs,
+        cfg.models.patience,
+        log=typer.echo,
+    )
+    typer.echo(f"Modèles figés dans {live_models} ({time.perf_counter() - start:.0f} s).")
+    models = ls.load_models(live_models, cfg.features.window)
+    now = datetime.now(UTC)
+    event, state = ls.plan_event(
+        cfg,
+        live,
+        {"file": frozen.as_posix(), "settings": frozen_settings},
+        frame,
+        models,
+        live_models,
+        training,
+        _git_state(),
+        frozen_head,
+        now,
+    )
+    event.update(previous_attempts=previous, reason_again=again or None, quick=quick)
+    chain = Chain.start([event, state.event()], signer)
+    s = event["settings"]
+    typer.echo(
+        f"Plan scellé avec la règle du gel {frozen_head[:12]}… : {_rule_text(s)}, "
+        f"stop-loss -{s['stop_loss']:.0%}, drawdown max -{s['max_drawdown']:.0%}, "
+        f"capital {s['initial_capital']:,.0f} $."
+    )
+    reports = ls.advance(chain, frame, models, now)
+    typer.echo("\nPremier jour :")
+    _live_report(reports)
+    _save_live(chain, path, public_key, anchor, env, anchors_path)
+    typer.echo(
+        "\nChaque jour de cotation, après minuit UTC (1 h ou 2 h du matin à Paris) : "
+        "`uv run gold-agents live`. Tableau de bord : page « Simulation en direct »."
+    )
+
+
+@app.command()
+def live(
+    config: Path = CONFIG_OPTION,
+    source: UpdateSource = SOURCE_OPTION,
+    no_update: bool = typer.Option(False, "--no-update", help="Ne pas appeler l'API avant."),
+    live_models: Path = LIVE_MODELS_OPTION,
+    ledger_dir: Path = LIVE_LEDGER_OPTION,
+    key: Path = PRIVATE_KEY_OPTION,
+    public_key: Path = PUBLIC_KEY_OPTION,
+    env: Path = ENV_OPTION,
+    anchors_path: Path = ANCHORS_OPTION,
+    no_anchor: bool = typer.Option(False, "--no-anchor", help="Ne pas ancrer sur Sepolia."),
+) -> None:
+    """Simulation en direct : ajoute les nouveaux jours de cotation au registre, signe, ancre."""
+    from gold_agents.blockchain.signing import load_public_key
+    from gold_agents.blockchain.storage import read_jsonl
+    from gold_agents.live import session as ls
+
+    cfg = load_config(config)
+    path = ledger_dir / ls.LEDGER_FILE
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `uv run gold-agents live-init`.", err=True)
+        raise typer.Exit(code=1)
+    chain = read_jsonl(path)
+    pub = load_public_key(public_key) if public_key.exists() else None
+    check = chain.verify(pub)
+    if not check.valid:
+        typer.echo(f"Registre en direct refusé : {check.describe()}", err=True)
+        raise typer.Exit(code=1)
+    plan = ls.genesis(chain)
+    problems = ls.check_models(live_models, plan["models"]["files"])
+    if problems:
+        for p in problems:
+            typer.echo(f"  REFUS : {p}", err=True)
+        typer.echo("Les modèles ne sont plus ceux scellés dans le plan : rien n'est décidé.")
+        raise typer.Exit(code=1)
+    chain.signer = _live_signer(key)
+    anchor = not no_anchor
+    if anchor:
+        _check_anchor_env(env)
+    if not no_update:
+        _update(cfg, source)
+    frame = ls.live_frame(cfg)
+    for day in ls.revised_bars(chain, frame):
+        typer.echo(
+            f"  Note : la barre du {day} a été révisée par l'API ; le registre garde l'ancienne."
+        )
+    models = ls.load_models(live_models, int(plan["settings"]["window"]))
+    before = len(chain)
+    reports = ls.advance(chain, frame, models)
+    state = ls.last_state(chain)
+    if not reports:
+        typer.echo(
+            f"Aucun nouveau jour de cotation depuis le {state.last_date} (la barre du jour "
+            "n'est prise qu'une fois close, après minuit UTC). Rien à ajouter."
+        )
+        return
+    typer.echo(f"{len(reports)} jour(s) ajouté(s) (blocs {before} à {len(chain) - 1}) :")
+    _live_report(reports)
+    late = sum(not r.on_time for r in reports)
+    if late:
+        typer.echo(
+            f"  {late} jour(s) rattrapé(s) : décisions marquées « en retard » dans le registre."
+        )
+    _save_live(chain, path, public_key, anchor, env, anchors_path)
 
 
 if __name__ == "__main__":
