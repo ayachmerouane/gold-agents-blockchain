@@ -1,3 +1,7 @@
 # Registres et clés : octets exacts, jamais de conversion CRLF (les hash portent sur les octets).
 *.jsonl -text
 *.pem -text
+# Simulation en direct : les SHA-256 des modèles figés sont scellés dans le genèse et ceux
+# des CSV dans CHECKSUMS.txt, calculés sur les octets écrits sous Windows (CRLF).
+outputs/models/live/** -text
+data/raw/*.csv -text
