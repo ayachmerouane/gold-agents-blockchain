@@ -5,8 +5,9 @@ Le principe : juger le système sur des prix qui n'existaient pas encore quand i
 1. `live-init` (une fois) : les données sont mises à jour, LSTM et GRU sont réentraînés sur
    tout l'historique connu (hyperparamètres de la phase 4, mêmes règles que le walk-forward)
    puis figés. Le bloc genèse du registre en direct scelle la règle du dernier
-   `freeze` (la même que pour le test, vérifiée par `live-init`), l'empreinte SHA-256 de chaque poids,
-   les données et le commit. Il est signé, puis ancré sur Sepolia AVANT le premier jour.
+   `freeze` (la même que pour le test, vérifiée par `live-init`), l'empreinte SHA-256 de
+   chaque poids, les données et le commit. Il est signé, puis ancré sur Sepolia AVANT le
+   premier jour.
 2. `live` (chaque jour de cotation) : nouvelles barres quotidiennes (Twelve Data), puis,
    pour chaque nouveau jour D : l'ordre décidé la veille est exécuté à l'ouverture de D,
    le portefeuille est valorisé à la clôture de D, et les agents décident pour le jour
