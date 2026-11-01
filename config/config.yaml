@@ -88,3 +88,11 @@ tuning:
     models: [ensemble]  # tentative 2 : le système principal annoncé (ensemble + MC)
   costs_factors: [0, 1, 2, 5]
   random_runs: 200      # stratégies aléatoires (même nombre de trades) par période
+
+live:
+  # Simulation en direct (paper trading), après le test. La règle de décision est celle
+  # de `strategy` et `risk` ci-dessus, scellée par `freeze` : live-init refuse de démarrer
+  # si elle diffère du dernier gel. Ici : seulement l'entraînement des modèles figés.
+  seeds: [0, 1, 2]      # graines par réseau (comme le walk-forward)
+  early_stop_days: 250  # la dernière année du passé sert à l'arrêt anticipé
+  mc_seed: 0            # graine du MC Dropout (σ̂ reproductible)

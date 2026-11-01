@@ -155,6 +155,19 @@ class TuningConfig(_Strict):
         return self
 
 
+class LiveConfig(_Strict):
+    """Simulation en direct (paper trading) sur les jours qui suivent la fin des données.
+
+    La règle de décision n'est PAS ici : c'est celle de `strategy` et `risk`, scellée par
+    `gold-agents freeze` (une seule règle gelée pour le test et le direct). Cette section
+    dit seulement comment réentraîner les modèles figés du direct.
+    """
+
+    seeds: list[int] = Field(default=[0, 1, 2], min_length=1)  # graines par réseau
+    early_stop_days: int = Field(default=250, gt=0)  # fin du passé : arrêt anticipé
+    mc_seed: int = 0  # graine du MC Dropout (σ̂ reproductible)
+
+
 class Config(_Strict):
     seed: int
     data: DataConfig
@@ -165,6 +178,7 @@ class Config(_Strict):
     simulation: SimulationConfig
     models: ModelsConfig = ModelsConfig()
     tuning: TuningConfig | None = None
+    live: LiveConfig | None = None
 
     @model_validator(mode="after")
     def _tuning_before_test(self) -> Config:

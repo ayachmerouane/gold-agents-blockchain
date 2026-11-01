@@ -1,4 +1,4 @@
-"""Tableau de bord Streamlit (§9) : six pages qui lisent seulement outputs/ et ledger/.
+"""Tableau de bord Streamlit (§9) : sept pages qui lisent seulement outputs/ et ledger/.
 
 Lancer depuis la racine du dépôt avec : make dashboard
 (ou : uv run --extra dashboard streamlit run dashboard/app.py)
@@ -20,6 +20,9 @@ apply_style()
 st.logo(str(Path(__file__).parent / "assets" / "logo.svg"), size="large")
 
 pages = {
+    "En direct": [
+        st.Page("pages/direct.py", title="Simulation en direct", icon=":material/bolt:"),
+    ],
     "Performance": [
         st.Page("pages/vue_ensemble.py", title="Vue d'ensemble", icon=":material/dashboard:"),
         st.Page("pages/portefeuille.py", title="Portefeuille", icon=":material/account_balance:"),

@@ -236,6 +236,32 @@ uv run gold-agents evaluate --frozen-head <hash> --again "raison"   # commande e
 
 Rien n'est effacé : la tentative 1 est archivée dans `outputs/ledger/test_tentative1/` et `outputs/results/final_test_tentative1/`, citée dans le nouveau plan avec la raison. `ledger/moves.json` note chaque déplacement : l'ancrage Sepolia de la tentative 1 reste vérifiable (tableau de bord, `verify_ledger.py --anchors`). Le tableau de bord montre les deux tentatives (sélecteur « Période »).
 
+## Simulation en direct (paper trading)
+
+Pour juger le système sur des prix **qui n'existaient pas encore** quand il a décidé, on le
+fait tourner jour après jour sur les nouvelles cotations, avec **la même règle gelée que le
+test** (celle du dernier `freeze`, par exemple le seuil relatif de la tentative 2) :
+`live-init` refuse de démarrer si la config ne correspond pas à ce gel.
+
+```bash
+uv run gold-agents live-init        # 1 fois : données à jour, modèles figés, plan signé et ancré
+uv run gold-agents live             # chaque jour de cotation, après minuit UTC
+```
+
+- `live-init` réentraîne LSTM et GRU (3 graines) sur tout l'historique, scelle dans le
+  bloc genèse la règle gelée, le SHA-256 de chaque poids, les données et le commit, puis
+  inscrit et ancre la décision du dernier jour connu. Les 250 dernières prévisions de
+  l'arrêt anticipé servent d'historique au seuil relatif dès le premier jour.
+- `live` met à jour les données (Twelve Data), refuse de continuer si un poids a changé,
+  puis, pour chaque nouveau jour : exécute l'ordre de la veille à l'ouverture, valorise à
+  la clôture, décide pour le lendemain, signe le bloc et ancre la tête sur Sepolia.
+  Buy & Hold (achat le premier jour) est suivi dans le même bloc, comme référence.
+- Une décision est **à temps** si la barre du jour suivant n'existait pas encore quand
+  elle a été écrite. Un jour manqué est rattrapé (même résultat, tout est figé) mais
+  marqué **en retard**.
+- Registre : `outputs/ledger/live/agents_live.jsonl` ; page « Simulation en direct » du
+  tableau de bord. Options : `--no-update`, `--no-anchor`.
+
 ## Tableau de bord (phase 9)
 
 ```bash

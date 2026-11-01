@@ -28,6 +28,9 @@ from gold_agents.blockchain.signing import Signer, fingerprint, load_public_key
 from gold_agents.blockchain.storage import read_jsonl
 from gold_agents.evaluation import financial_metrics as fm
 
+# Dossier du registre de la simulation en direct (page « Simulation en direct »).
+LIVE_DIR = "live"
+LIVE_LEDGER = "agents_live.jsonl"
 # Registres qui ne sont pas une stratégie : plan du test et résultats scellés.
 SPECIAL_LEDGERS = ("plan", "resultats")
 # Ordre d'affichage : références simples, agents, puis hasard et oracle.
@@ -50,6 +53,7 @@ LABELS = {
     "agents_ensemble": "Agents (ensemble)",
     "agents_ensemble_mc": "Agents (ensemble + incertitude)",
     "agents_lightgbm": "Agents (LightGBM)",
+    "agents_live": "Agents en direct (seuil relatif)",
     "aleatoire": "Hasard",
     "oracle": "Oracle (connaît le futur)",
 }
@@ -103,6 +107,8 @@ def run_sets(root: Path) -> list[RunSet]:
     base = root / "outputs" / "ledger"
     found = []
     for d in sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
+        if d.name == LIVE_DIR:  # la simulation en direct a sa propre page
+            continue
         stems = [p.stem for p in d.glob("*.jsonl") if p.stem not in SPECIAL_LEDGERS]
         if not stems:
             continue
@@ -210,6 +216,80 @@ def realized_returns(close: pd.Series) -> pd.Series:
     """Rendement log du jour t à t+1 : ce que la prévision du jour t cherche à prédire."""
     ratio = (close.shift(-1) / close).astype("float64")
     return pd.Series(np.log(ratio.to_numpy()), index=close.index, name="target_return")
+
+
+# --- Simulation en direct ---------------------------------------------------------------
+
+
+def live_ledger(root: Path) -> Path:
+    return root / "outputs" / "ledger" / LIVE_DIR / LIVE_LEDGER
+
+
+def live_days(blocks: list[dict[str, Any]]) -> pd.DataFrame:
+    """Un jour de cotation par ligne : prix, prévision, décision, portefeuille, Buy & Hold."""
+    rows = []
+    for block in blocks:
+        if block.get("sim_date") is None:
+            continue
+        row: dict[str, Any] = {"date": block["sim_date"], "block": block["index"]}
+        for e in block["events"]:
+            kind = e.get("type")
+            if kind == "MARKET":
+                row.update(open=e["open"], close=e["close"])
+            elif kind == "TRADE":
+                row.update(trade_side=e["side"], trade_price=e["price"], trade_fees=e["fees"])
+            elif kind == "FORECAST":
+                row.update(
+                    r_hat=e.get("r_hat"),
+                    sigma_hat=e.get("sigma_hat"),
+                    threshold=e.get("buy_threshold"),
+                )
+            elif kind == "SIGNAL":
+                row.update(signal=e.get("action"), signal_reason=e.get("reason"))
+            elif kind == "ORDER":
+                row.update(
+                    action=e.get("action") if e.get("approved") else "HOLD",
+                    rule=e.get("rule"),
+                    reason=e.get("reason"),
+                    approved=e.get("approved"),
+                )
+            elif kind == "PORTFOLIO":
+                row.update(value=e["value"], cash=e["cash"], qty=e["qty"])
+            elif kind == "BENCHMARK":
+                row["bh_value"] = e["value"]
+            elif kind == "TIMING":
+                row.update(on_time=e["on_time"], decided_at=e["decided_at"])
+        rows.append(row)
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["decided_at"] = pd.to_datetime(frame["decided_at"], utc=True)
+    for col in ("r_hat", "sigma_hat", "threshold", "trade_price"):
+        if col in frame:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    return frame
+
+
+def live_anchors(root: Path, ledger: Path) -> pd.DataFrame:
+    """Ancrages Sepolia du registre en direct : date, nombre de blocs couverts, lien."""
+    file = ledger.relative_to(root).as_posix() if ledger.is_relative_to(root) else ""
+    rows = []
+    for check in anchor_checks(root):
+        files = check["files"]
+        if files.empty or file not in set(files["fichier"]):
+            continue
+        entry = files[files["fichier"] == file].iloc[0]
+        rows.append(
+            {
+                "anchored_at": pd.Timestamp(check["anchored_at"]),
+                "blocks": int(entry["blocs"]),
+                "block_number": check["block_number"],
+                "status": check["status"],
+                "url": check["url"],
+            }
+        )
+    return pd.DataFrame(rows, columns=["anchored_at", "blocks", "block_number", "status", "url"])
 
 
 # --- Résultats -----------------------------------------------------------------------------
@@ -376,11 +456,16 @@ def tamper_scenarios(path: Path, public_key_path: Path | None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def ledger_head(path: Path, root: Path) -> LedgerHead:
-    """Nombre de blocs et hash de tête, lus à la fin du fichier."""
+def ledger_head(path: Path, root: Path, blocks: int | None = None) -> LedgerHead:
+    """Nombre de blocs et hash de tête, lus à la fin du fichier.
+
+    Avec `blocks`, la tête telle qu'elle était quand le registre avait `blocks` blocs : un
+    registre qui grandit (simulation en direct) garde ses anciens ancrages vérifiables.
+    """
     lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     file = path.relative_to(root).as_posix()
-    return LedgerHead(file, len(lines), str(json.loads(lines[-1])["hash"]))
+    n = len(lines) if blocks is None or blocks > len(lines) or blocks < 1 else blocks
+    return LedgerHead(file, n, str(json.loads(lines[n - 1])["hash"]))
 
 
 def anchor_checks(root: Path) -> list[dict[str, Any]]:
@@ -397,11 +482,16 @@ def anchor_checks(root: Path) -> list[dict[str, Any]]:
             # Un registre archivé est relu à sa nouvelle place, sous son nom ancré.
             ledger = root / resolve(entry["file"], moves)
             if ledger.is_file():
-                head = ledger_head(ledger, root)
+                head = ledger_head(ledger, root, int(entry["blocks"]))
                 head = LedgerHead(entry["file"], head.blocks, head.head)
                 current.append(head)
                 same = head.head == entry["head"] and head.blocks == entry["blocks"]
-                state = "identique" if same else "DIFFÉRENT"
+                grown = ledger_head(ledger, root).blocks > head.blocks
+                state = (
+                    ("identique, prolongé depuis" if grown else "identique")
+                    if same
+                    else ("DIFFÉRENT")
+                )
             else:
                 state = "absent de ce PC"
             files.append(
@@ -533,8 +623,17 @@ EVENT_LABELS = {
     "RANDOM_REFERENCES": "Comparaison au hasard",
     "FORECAST_METRICS": "Erreurs de prévision",
     "ALERTS": "Alertes",
+    "MARKET": "Prix du jour",
+    "BENCHMARK": "Référence Buy & Hold",
+    "TIMING": "Horodatage de la décision",
+    "STATE": "État pour le lendemain",
 }
-PERIOD_SUFFIX = {"test": "test", "agents_val": "validation", "final_val": "répétition"}
+PERIOD_SUFFIX = {
+    "test": "test",
+    "agents_val": "validation",
+    "final_val": "répétition",
+    "live": "en direct",
+}
 
 
 def ledger_label(stem: str) -> str:
@@ -568,6 +667,8 @@ def rule_label(rule: Any) -> Any:
 def event_summary(event: dict[str, Any]) -> str:
     """Une phrase lisible pour un événement de bloc."""
     kind = event.get("type")
+    if kind == "FORECAST" and event.get("r_hat") is None:
+        return "pas de prévision ce jour-là"
     if kind == "FORECAST":
         sigma = event.get("sigma_hat")
         extra = f", incertitude σ̂ {sigma:.4%}" if sigma else ""
