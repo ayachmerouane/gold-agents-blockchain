@@ -1,0 +1,62 @@
+[
+  {
+    "from": "outputs/ledger/reglages_figes.jsonl",
+    "to": "outputs/ledger/reglages_figes_v1.jsonl",
+    "moved_at": "2026-11-01T02:12:33+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/agents_ensemble.jsonl",
+    "to": "outputs/ledger/test_tentative1/agents_ensemble.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/agents_ensemble_mc.jsonl",
+    "to": "outputs/ledger/test_tentative1/agents_ensemble_mc.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/agents_gru.jsonl",
+    "to": "outputs/ledger/test_tentative1/agents_gru.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/agents_lightgbm.jsonl",
+    "to": "outputs/ledger/test_tentative1/agents_lightgbm.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/agents_lstm.jsonl",
+    "to": "outputs/ledger/test_tentative1/agents_lstm.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/aleatoire.jsonl",
+    "to": "outputs/ledger/test_tentative1/aleatoire.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/buy_and_hold.jsonl",
+    "to": "outputs/ledger/test_tentative1/buy_and_hold.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/oracle.jsonl",
+    "to": "outputs/ledger/test_tentative1/oracle.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/plan.jsonl",
+    "to": "outputs/ledger/test_tentative1/plan.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/resultats.jsonl",
+    "to": "outputs/ledger/test_tentative1/resultats.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  },
+  {
+    "from": "outputs/ledger/test/sma_20_50.jsonl",
+    "to": "outputs/ledger/test_tentative1/sma_20_50.jsonl",
+    "moved_at": "2026-11-01T02:17:23+00:00"
+  }
+]
