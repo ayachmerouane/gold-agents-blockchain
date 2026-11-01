@@ -266,15 +266,19 @@ uv run gold-agents live             # chaque jour de cotation, après minuit UTC
 
 `scripts/live_daily.sh` fait la routine complète : `git pull`, `gold-agents live`, puis
 commit et push du registre s'il y a un nouveau jour (journal : `outputs/live_daily.log`).
-Pour le lancer chaque nuit à 2 h, une seule fois dans **PowerShell** :
+Pour le lancer chaque nuit à 2 h, une seule fois dans **PowerShell** (pas Git Bash) :
 
 ```powershell
-schtasks /Create /TN "GoldAgentsLive" /SC DAILY /ST 02:00 /F /TR "\"C:\Program Files\Git\bin\bash.exe\" -lc 'cd /c/gold-agents-blockchain && bash scripts/live_daily.sh'"
-schtasks /Run /TN "GoldAgentsLive"    # essai immédiat, puis lire outputs/live_daily.log
+$a = New-ScheduledTaskAction -Execute "C:\Program Files\Git\bin\bash.exe" -Argument "-lc 'cd /c/gold-agents-blockchain && bash scripts/live_daily.sh'"
+$t = New-ScheduledTaskTrigger -Daily -At 2am
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable
+Register-ScheduledTask -TaskName "GoldAgentsLive" -Action $a -Trigger $t -Settings $s -Force
+Start-ScheduledTask -TaskName "GoldAgentsLive"   # essai immédiat, puis lire outputs/live_daily.log
 ```
 
-Le PC doit être allumé (une nuit manquée est rattrapée la suivante, marquée « en retard »).
-La clé Twelve Data est lue dans `.env`. Arrêter : `schtasks /Delete /TN "GoldAgentsLive" /F`.
+PC éteint à 2 h : la tâche part dès qu'il se rallume (`-StartWhenAvailable`) ; un jour
+rattrapé ainsi est marqué « en retard ». La clé Twelve Data est lue dans `.env`.
+Arrêter : `Unregister-ScheduledTask -TaskName "GoldAgentsLive" -Confirm:$false`.
 
 ## Tableau de bord (phase 9)
 
