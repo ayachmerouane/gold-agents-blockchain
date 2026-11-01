@@ -120,10 +120,21 @@ def test_apply_settings_rewrites_only_the_settings(tmp_path: Path) -> None:
     Config.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
+def copy_test_anchors(src: Path, dst: Path) -> None:
+    """Copie les seuls ancrages du test final (sans ceux de la simulation en direct)."""
+    anchors = json.loads(src.read_text(encoding="utf-8"))
+    kept = [
+        a
+        for a in anchors
+        if all(x["file"].startswith("outputs/ledger/test/") for x in a["ledgers"])
+    ]
+    dst.write_text(json.dumps(kept), encoding="utf-8")
+
+
 def test_archived_ledger_keeps_its_anchor_valid(tmp_path: Path) -> None:
     shutil.copytree(ROOT / "outputs" / "ledger" / "test", tmp_path / "outputs" / "ledger" / "test")
     (tmp_path / "ledger").mkdir()
-    shutil.copy(ROOT / "ledger" / "anchors.json", tmp_path / "ledger" / "anchors.json")
+    copy_test_anchors(ROOT / "ledger" / "anchors.json", tmp_path / "ledger" / "anchors.json")
     assert data.anchor_checks(tmp_path)[-1]["status"] == "conforme"
 
     moves = tmp_path / "ledger" / "moves.json"

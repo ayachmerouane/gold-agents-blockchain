@@ -84,14 +84,30 @@ def test_tamper_scenarios_all_detected() -> None:
     assert table["détectée"].all()
 
 
+def copy_test_anchors(src: Path, dst: Path) -> None:
+    """Copie les seuls ancrages du test final (sans ceux de la simulation en direct)."""
+    anchors = json.loads(src.read_text(encoding="utf-8"))
+    kept = [
+        a
+        for a in anchors
+        if all(x["file"].startswith("outputs/ledger/test/") for x in a["ledgers"])
+    ]
+    dst.write_text(json.dumps(kept), encoding="utf-8")
+
+
 def test_anchor_checks_detect_a_changed_ledger(tmp_path: Path) -> None:
-    checks = data.anchor_checks(ROOT)
-    assert checks[-1]["status"] == "conforme"
+    # Le dernier ancrage du test final (d'autres, comme la simulation en direct, suivent).
+    test_checks = [
+        c
+        for c in data.anchor_checks(ROOT)
+        if all(f.startswith("outputs/ledger/test/") for f in c["files"]["fichier"])
+    ]
+    assert test_checks[-1]["status"] == "conforme"
 
     # Copie du dépôt minimal : on change le dernier bloc d'un registre ancré.
     shutil.copytree(TEST_DIR, tmp_path / "outputs" / "ledger" / "test")
     (tmp_path / "ledger").mkdir()
-    shutil.copy(ROOT / "ledger" / "anchors.json", tmp_path / "ledger" / "anchors.json")
+    copy_test_anchors(ROOT / "ledger" / "anchors.json", tmp_path / "ledger" / "anchors.json")
     path = tmp_path / "outputs" / "ledger" / "test" / "oracle.jsonl"
     lines = path.read_text(encoding="utf-8").splitlines()
     last = json.loads(lines[-1])
