@@ -146,12 +146,27 @@ def download_kaggle(
 # --- Twelve Data ----------------------------------------------------------
 
 
-def _twelvedata_key(env: Mapping[str, str] | None = None) -> str:
+def _dotenv(path: Path) -> dict[str, str]:
+    """`CLE=valeur` de `.env` (lignes vides et commentaires ignorés, guillemets retirés)."""
+    values: dict[str, str] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip("\"'")
+    return values
+
+
+def _twelvedata_key(env: Mapping[str, str] | None = None, dotenv: Path = Path(".env")) -> str:
+    """La clé Twelve Data : variable d'environnement, à défaut fichier `.env`."""
     env = os.environ if env is None else env
-    key = env.get(TWELVEDATA_KEY_ENV)
+    key = env.get(TWELVEDATA_KEY_ENV) or _dotenv(dotenv).get(TWELVEDATA_KEY_ENV)
     if not key:
         raise SourceError(
-            f"variable d'environnement {TWELVEDATA_KEY_ENV} absente "
+            f"{TWELVEDATA_KEY_ENV} absente de l'environnement et de {dotenv} "
             "(clé gratuite sur https://twelvedata.com/register)"
         )
     return key
