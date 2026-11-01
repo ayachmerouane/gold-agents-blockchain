@@ -417,9 +417,11 @@ def simulate(
     tables = ar.forecast_tables(cfg, data, split, models_dir, forecast_dir)
     start, end = ar.simulation_period(frame, split)
     st = cfg.strategy
+    k = "sans filtre" if st.min_confidence is None else f"{st.min_confidence:g}"
+    rule = "" if st.buy_rule == "absolute" else " (quantile des prévisions passées)"
     typer.echo(
         f"Période {split} : du {start} au {end}, frais x {costs_factor:g}. Stratégie : "
-        f"θ_buy {st.theta_buy:g}, θ_sell {st.theta_sell:g}, confiance k = {st.min_confidence:g}."
+        f"θ_buy {st.theta_buy:g}{rule}, θ_sell {st.theta_sell:g}, confiance k = {k}."
     )
     typer.echo("\nPrévisions des modèles (agent de prévision) :")
     typer.echo(ar.diagnostics(tables, cfg).to_string())
