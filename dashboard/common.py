@@ -14,7 +14,14 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from gold_agents.dashboard import data
+try:
+    import gold_agents  # noqa: F401
+except ModuleNotFoundError:  # hébergé sans installer le paquet (Streamlit Community Cloud)
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from gold_agents.dashboard import data  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_KEY = ROOT / "ledger" / "public_key.pem"
