@@ -3,7 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
+    # Les sauvegardes quotidiennes de la simulation en direct ne touchent que les
+    # registres : inutile de relancer 20 minutes de tests pour elles.
+    paths-ignore:
+      - "outputs/ledger/**"
+      - "ledger/**"
   pull_request:
+
+# Un nouvel envoi sur la même branche annule le run précédent, devenu inutile.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
