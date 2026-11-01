@@ -15,9 +15,10 @@ log="outputs/live_daily.log"
     uv run gold-agents live
     git add outputs/ledger/live ledger
     if git diff --cached --quiet; then
-        echo "Rien de nouveau à sauvegarder."
+        echo "Rien de nouveau à enregistrer."
     else
         git commit -m "Simulation en direct : $(date -u '+%Y-%m-%d')"
-        git push origin main
     fi
+    # Toujours : envoie aussi un commit local resté en attente (sans effet si à jour).
+    git push origin main
 } >> "$log" 2>&1
