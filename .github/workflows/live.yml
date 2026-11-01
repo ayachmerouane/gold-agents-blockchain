@@ -61,10 +61,34 @@ jobs:
           uv sync --extra ml --extra anchor
 
       - name: Clé de signature du registre
+        # Accepte le PEM collé tel quel (espaces, retours Windows, lignes recollées) ou
+        # sur une seule ligne en base64 (`base64 -w0 keys/ledger_ed25519.key`), puis
+        # vérifie qu'elle correspond à la clé publique publiée.
         run: |
           umask 077
           mkdir -p keys
-          printf '%s\n' "$LEDGER_PRIVATE_KEY" > keys/ledger_ed25519.key
+          uv run --no-sync python - <<'PY'
+          import base64, os, re
+          from pathlib import Path
+          from cryptography.hazmat.primitives import serialization
+
+          raw = os.environ["LEDGER_PRIVATE_KEY"].strip()
+          if "BEGIN" not in raw:
+              raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+          m = re.search(r"-----BEGIN ([A-Z ]+)-----(.*?)-----END", raw, re.S)
+          if not m:
+              raise SystemExit("LEDGER_PRIVATE_KEY illisible : lignes BEGIN/END introuvables.")
+          body = re.sub(r"[^A-Za-z0-9+/=]", "", m.group(2))
+          lines = [body[i : i + 64] for i in range(0, len(body), 64)]
+          pem = f"-----BEGIN {m.group(1)}-----\n" + "\n".join(lines) + f"\n-----END {m.group(1)}-----\n"
+          key = serialization.load_pem_private_key(pem.encode(), password=None)
+          pub = serialization.load_pem_public_key(Path("ledger/public_key.pem").read_bytes())
+          raw_fmt = (serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+          if key.public_key().public_bytes(*raw_fmt) != pub.public_bytes(*raw_fmt):
+              raise SystemExit("LEDGER_PRIVATE_KEY ne correspond pas à ledger/public_key.pem.")
+          Path("keys/ledger_ed25519.key").write_text(pem)
+          print("Clé de signature chargée et conforme à la clé publique.")
+          PY
 
       - name: Simulation en direct (un jour de plus)
         run: uv run gold-agents live
