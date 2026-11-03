@@ -163,7 +163,7 @@ def _dotenv(path: Path) -> dict[str, str]:
 def _twelvedata_key(env: Mapping[str, str] | None = None, dotenv: Path = Path(".env")) -> str:
     """La clé Twelve Data : variable d'environnement, à défaut fichier `.env`."""
     env = os.environ if env is None else env
-    key = env.get(TWELVEDATA_KEY_ENV) or _dotenv(dotenv).get(TWELVEDATA_KEY_ENV)
+    key = (env.get(TWELVEDATA_KEY_ENV) or "").strip() or _dotenv(dotenv).get(TWELVEDATA_KEY_ENV)
     if not key:
         raise SourceError(
             f"{TWELVEDATA_KEY_ENV} absente de l'environnement et de {dotenv} "

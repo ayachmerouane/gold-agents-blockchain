@@ -91,10 +91,25 @@ jobs:
           PY
 
       - name: Simulation en direct (un jour de plus)
+        id: live
         run: uv run gold-agents live
 
+      # Même si l'ancrage a échoué, le bloc signé est gardé (sinon le jour serait refait
+      # plus tard et marqué « en retard ») ; le lancement reste rouge pour prévenir, et
+      # le prochain ancrage couvrira ce bloc. Un registre invalide n'est jamais gardé.
       - name: Enregistrer le nouveau bloc dans le dépôt
+        if: always() && steps.live.outcome != 'skipped'
         run: |
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          from gold_agents.blockchain.signing import load_public_key
+          from gold_agents.blockchain.storage import read_jsonl
+
+          path = Path("outputs/ledger/live/agents_live.jsonl")
+          result = read_jsonl(path).verify(load_public_key(Path("ledger/public_key.pem")))
+          print(f"{path} : {result.describe()}")
+          raise SystemExit(0 if result.valid else 1)
+          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add outputs/ledger/live ledger data/raw/XAU_1d_update.csv

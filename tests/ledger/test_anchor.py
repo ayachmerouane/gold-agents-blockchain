@@ -52,6 +52,11 @@ def test_read_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert read_env(env) == {"SEPOLIA_RPC_URL": "https://rpc", "SEPOLIA_PRIVATE_KEY": "0xabc"}
     monkeypatch.setenv("SEPOLIA_RPC_URL", "https://autre")
     assert read_env(env)["SEPOLIA_RPC_URL"] == "https://autre"
+    # Secret collé avec un retour à la ligne final (GitHub Actions) : ignoré.
+    monkeypatch.setenv("SEPOLIA_RPC_URL", "https://rpc.example\n\n")
+    assert read_env(env)["SEPOLIA_RPC_URL"] == "https://rpc.example"
+    monkeypatch.setenv("SEPOLIA_RPC_URL", " \n")
+    assert read_env(env)["SEPOLIA_RPC_URL"] == "https://rpc"
 
 
 def test_transaction_is_sepolia_only_and_signs_offline() -> None:

@@ -192,6 +192,8 @@ def test_twelvedata_key_read_from_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert sources._twelvedata_key() == "abc123"
     monkeypatch.setenv(sources.TWELVEDATA_KEY_ENV, "env")
     assert sources._twelvedata_key() == "env"  # l'environnement l'emporte
+    monkeypatch.setenv(sources.TWELVEDATA_KEY_ENV, "env\n")
+    assert sources._twelvedata_key() == "env"  # retour à la ligne d'un secret collé
 
 
 # --- yfinance (module simulé) ---

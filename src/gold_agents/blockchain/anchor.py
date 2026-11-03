@@ -72,8 +72,9 @@ def read_env(path: Path) -> dict[str, str]:
                 key, value = line.split("=", 1)
                 values[key.strip()] = value.strip().strip("\"'")
     for key in ENV_KEYS:
-        if os.environ.get(key):
-            values[key] = os.environ[key]
+        # Un secret collé garde souvent un retour à la ligne final : on l'ignore.
+        if os.environ.get(key, "").strip():
+            values[key] = os.environ[key].strip().strip("\"'")
     missing = [k for k in ENV_KEYS if not values.get(k)]
     if missing:
         raise KeyError(f"{', '.join(missing)} absent de {path} et de l'environnement")
