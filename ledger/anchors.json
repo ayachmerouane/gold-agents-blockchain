@@ -298,5 +298,21 @@
         "head": "0003b4b3055e84663aedca2438734d65f23c0fbf9639da3cc2997adcd69364b5"
       }
     ]
+  },
+  {
+    "anchored_at": "2026-11-07T07:35:37+00:00",
+    "network": "sepolia",
+    "chain_id": 11155111,
+    "tx_hash": "0x03fe3223e1c6cffb717c9744a7eeb001d5e80f864261025864e1ead94e149e6f",
+    "block_number": 12082222,
+    "sender": "0x9Ed35Fdbb7a34A632a821301DD3c94B64Ffefb2B",
+    "digest": "04bbfd4f0c8ec84ef0eb98cdde45fccd71bda975dd9566e32b64c2dba0cc2567",
+    "ledgers": [
+      {
+        "file": "outputs/ledger/live/agents_live.jsonl",
+        "blocks": 7,
+        "head": "000c93c1ecdb53a926646d003ea4eebe13225e659b86c9e40a2c84fb4bf05264"
+      }
+    ]
   }
 ]
