@@ -229,6 +229,7 @@ def run_order_backtest(
     max_hold: int,
     exit_at_close: Callable[[pd.Timestamp], bool] | None = None,
     may_decide: np.ndarray | None = None,
+    decide_at: Callable[[int], Order | None] | None = None,
     intraday: bool = False,
     ledger: Chain | None = None,
 ) -> BacktestResult:
@@ -241,7 +242,9 @@ def run_order_backtest(
     jusqu'à t incluse, et seulement elles, et écrit l'ordre de la barre suivante.
     L'ordre de la dernière barre n'est pas exécuté. `may_decide[t]` (facultatif, calculé
     d'après la seule barre t, par exemple « la barre suivante est en kill zone ») évite
-    d'appeler `decide` quand aucun ordre n'est possible.
+    d'appeler `decide` quand aucun ordre n'est possible. `decide_at(t)` (facultatif) fait
+    la même chose que `decide(frame.iloc[: t + 1])`, sans copier le tableau : il ne doit
+    lire que les barres 0 à t.
     """
     frame = frame.reset_index(drop=True)
     cols = {c: frame[c].to_numpy(dtype="float64") for c in ("open", "high", "low", "close")}
@@ -314,7 +317,7 @@ def run_order_backtest(
         if i != last:
             action = "HOLD"
             if book.qty == 0 and (may_decide is None or may_decide[i]):
-                new_order = decide(frame.iloc[: i + 1])
+                new_order = decide(frame.iloc[: i + 1]) if decide_at is None else decide_at(i)
                 if new_order is not None:
                     pending, action = (new_order, now), "ORDER"
         rows.append(

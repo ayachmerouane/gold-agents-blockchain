@@ -29,3 +29,18 @@ def test_future_replaced_by_noise(hourly_series: pd.DataFrame, cut: int, entry: 
     t = series["date"].iloc[cut]
     pd.testing.assert_frame_equal(a.equity[a.equity["date"] <= t], b.equity[b.equity["date"] <= t])
     assert [x for x in a.trades if x.exec_date <= t] == [x for x in b.trades if x.exec_date <= t]
+
+
+@pytest.mark.parametrize("target", ["prev_day_high", "fixed_r"])
+def test_fast_path_equals_truncated_history(hourly_series: pd.DataFrame, target: str) -> None:
+    """`order_at(bars, t)` (moteur) = `intraday_order` sur les seules barres 0 à t."""
+    from gold_agents.simulation.ict_intraday import bar_arrays, intraday_order, order_at
+
+    params = IntradayParams(target=target, min_reward_risk=0.5)  # type: ignore[arg-type]
+    bars = bar_arrays(hourly_series)
+    found = 0
+    for t in range(200, len(hourly_series), 7):
+        fast = order_at(bars, t, params)
+        assert fast == intraday_order(hourly_series.iloc[: t + 1], params)
+        found += fast is not None
+    assert found > 0

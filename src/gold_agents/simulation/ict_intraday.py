@@ -74,43 +74,57 @@ def in_kill_zone(hour: int, zones: tuple[tuple[int, int], ...]) -> bool:
 
 def next_bar_hours(hours: np.ndarray, minutes: np.ndarray, bar_minutes: int) -> np.ndarray:
     """Heure (New York) du début de la barre suivante, d'après la barre courante seule."""
-    return ((hours * 60 + minutes + bar_minutes) // 60) % 24
+    out: np.ndarray = ((hours * 60 + minutes + bar_minutes) // 60) % 24
+    return out
+
+
+def bar_arrays(frame: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Colonnes utiles en tableaux numpy (le jour de cotation en numéro de jour)."""
+    out = {c: frame[c].to_numpy(dtype="float64") for c in ("high", "low", "close")}
+    out["ny_hour"] = frame["ny_hour"].to_numpy(dtype="int64")
+    out["ny_minute"] = frame["ny_minute"].to_numpy(dtype="int64")
+    days = pd.to_datetime(pd.Series(frame["trading_day"])).to_numpy()
+    out["trading_day"] = days.astype("datetime64[D]").astype("int64")
+    return out
 
 
 def intraday_order(history: pd.DataFrame, params: IntradayParams) -> Order | None:
     """Ordre pour la barre suivante, ou `None`. N'utilise que `history` (barres closes)."""
-    history = history.iloc[-params.window :]
-    last_h = history["ny_hour"].to_numpy()[-1:]
-    last_m = history["ny_minute"].to_numpy()[-1:]
+    tail = history.iloc[-params.window :]
+    return order_at(bar_arrays(tail), len(tail) - 1, params)
+
+
+def order_at(bars: dict[str, np.ndarray], t: int, params: IntradayParams) -> Order | None:
+    """Ordre écrit à la clôture de la barre `t`, avec les seules barres `t - window + 1 … t`."""
+    first = max(0, t - params.window + 1)
+    a = {c: v[first : t + 1] for c, v in bars.items()}
+    last_h, last_m = a["ny_hour"][-1:], a["ny_minute"][-1:]
     next_hour = int(next_bar_hours(last_h, last_m, params.bar_minutes)[0])
     if not in_kill_zone(next_hour, params.kill_zones):
         return None
-    day = history["trading_day"].iat[-1]
-    days = history["trading_day"].to_numpy()
+    days = a["trading_day"]
+    n_bars = len(days)
+    day = days[-1]
     # Barres utiles : la veille (plus haut) et le jour de cotation en cours.
-    start = len(history) - 1
-    while start > 0 and days[start - 1] == day:
-        start -= 1
-    today = history.iloc[start:]
-    hours = today["ny_hour"].to_numpy()
+    start = int(np.searchsorted(days, day, side="left"))
+    hours = a["ny_hour"][start:]
     asia = (hours >= ASIA_START) & (hours < ASIA_END)
     if not asia.any():
         return None
-    asian_low = float(today["low"].to_numpy()[asia].min())
-    asian_high = float(today["high"].to_numpy()[asia].max())
+    today_low, today_high = a["low"][start:], a["high"][start:]
+    asian_low = float(today_low[asia].min())
+    asian_high = float(today_high[asia].max())
     after = np.flatnonzero(hours < ASIA_START)  # de minuit à maintenant (18-20 h exclus)
     after = after[after > np.flatnonzero(asia).max()]
     if len(after) == 0:
         return None
 
     lookback = max(0, start - 4 * params.swing - 6)
-    bars = history.iloc[lookback:]
-    high = bars["high"].to_numpy(dtype="float64")
-    low = bars["low"].to_numpy(dtype="float64")
-    close = bars["close"].to_numpy(dtype="float64")
-    t = len(close) - 1
-    offset = start - lookback
-    after_idx = after + offset
+    high = a["high"][lookback:]
+    low = a["low"][lookback:]
+    close = a["close"][lookback:]
+    t_rel = n_bars - 1 - lookback
+    after_idx = after + (start - lookback)
 
     sweep = int(after_idx[np.argmin(low[after_idx])])
     stop = float(low[sweep])
@@ -119,21 +133,21 @@ def intraday_order(history: pd.DataFrame, params: IntradayParams) -> Order | Non
     n = params.swing
     swing_highs, _ = swing_points(high, low, n)
     known = swing_highs[(swing_highs + n <= sweep) & (swing_highs < sweep)]
-    if len(known) == 0 or close[sweep : t + 1].max() <= high[known[-1]]:
+    if len(known) == 0 or close[sweep : t_rel + 1].max() <= high[known[-1]]:
         return None  # pas de changement de structure depuis le sweep
 
     if params.entry == "limit_fvg":
         level = None
-        for i in range(t, sweep + 1, -1):
+        for i in range(t_rel, sweep + 1, -1):
             if i - 2 >= sweep and low[i] > high[i - 2]:
-                if low[i + 1 : t + 1].min(initial=np.inf) > high[i - 2]:
+                if low[i + 1 : t_rel + 1].min(initial=np.inf) > high[i - 2]:
                     level = float(low[i])
                 break
         if level is None:
             return None
         how = f"achat limite {level:.2f} (FVG)"
     else:
-        level = float(high[t])
+        level = float(high[t_rel])
         how = f"achat si > {level:.2f} (plus haut de la barre)"
 
     if params.target == "fixed_r":
@@ -141,11 +155,11 @@ def intraday_order(history: pd.DataFrame, params: IntradayParams) -> Order | Non
     elif params.target == "asian_high":
         target = asian_high
     else:
-        prev = history.iloc[:start]
-        prev = prev[prev["trading_day"] == prev["trading_day"].iat[-1]] if len(prev) else prev
-        if prev.empty:
+        if start == 0:
             return None
-        target = float(prev["high"].max())
+        prev_day = days[start - 1]
+        p0 = int(np.searchsorted(days, prev_day, side="left"))
+        target = float(a["high"][p0:start].max())
     risk, reward = level - stop, target - level
     if risk <= 0 or reward < params.min_reward_risk * risk:
         return None
@@ -169,6 +183,7 @@ def run_intraday_backtest(
 ) -> BacktestResult:
     """Simule l'agent intraday ; `frame` vient de `data.intraday` (UTC + colonnes de séance)."""
     flat = params.flat_hour * 60
+    bars = bar_arrays(frame.reset_index(drop=True))
     ny = pd.to_datetime(frame["date"], utc=True).dt.tz_convert("America/New_York")
     nxt = next_bar_hours(ny.dt.hour.to_numpy(), ny.dt.minute.to_numpy(), params.bar_minutes)
     may_decide = np.array([in_kill_zone(int(h), params.kill_zones) for h in range(24)])[nxt]
@@ -189,6 +204,7 @@ def run_intraday_backtest(
         max_hold=params.max_hold_bars,
         exit_at_close=exit_at_close,
         may_decide=may_decide,
+        decide_at=lambda t: order_at(bars, t, params),
         intraday=True,
         ledger=ledger,
     )
