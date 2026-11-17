@@ -1,4 +1,4 @@
-.PHONY: ict install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard live-init live all
+.PHONY: ict ict-intraday install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard live-init live all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -59,6 +59,9 @@ tune:             ## Réglage des agents en walk-forward (grille, frais, hasard,
 
 ict:              ## Stratégie ICT à règles en walk-forward 2011-2021 (le test n'est pas lu)
 	uv run gold-agents ict
+
+ict-intraday:     ## Agent ICT intraday (1 h) en walk-forward 2011-2021 (le test n'est pas lu)
+	uv run gold-agents ict-intraday
 
 freeze:           ## Scelle les réglages de la config dans un bloc genèse (après tune)
 	uv run gold-agents freeze

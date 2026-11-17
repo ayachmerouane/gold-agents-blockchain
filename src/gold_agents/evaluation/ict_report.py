@@ -94,7 +94,11 @@ def _params(p: IctParams) -> dict[str, Any]:
 
 
 def choose(
-    grid: pd.DataFrame, folds: list[int], min_tpy: float, max_tpy: float | None
+    grid: pd.DataFrame,
+    folds: list[int],
+    min_tpy: float,
+    max_tpy: float | None,
+    columns: list[str] = PARAM_COLUMNS,
 ) -> tuple[dict[str, Any], bool]:
     """Réglage au meilleur Sharpe moyen sur `folds`, de préférence dans les bornes de trades.
 
@@ -106,13 +110,13 @@ def choose(
     )
     stats = (
         part.assign(within=within)
-        .groupby(PARAM_COLUMNS, sort=True)
+        .groupby(columns, sort=True)
         .agg(sharpe=("sharpe", "mean"), within=("within", "all"))
         .reset_index()
     )
     pool = stats[stats["within"]] if stats["within"].any() else stats
     best = pool.sort_values("sharpe", ascending=False, kind="stable").iloc[0]
-    return {c: best[c] for c in PARAM_COLUMNS}, bool(best["within"])
+    return {c: best[c] for c in columns}, bool(best["within"])
 
 
 def to_params(chosen: dict[str, Any], max_hold_days: int) -> IctParams:
@@ -132,11 +136,12 @@ def walk_forward(
     n_folds: int,
     min_tpy: float,
     max_tpy: float | None,
+    columns: list[str] = PARAM_COLUMNS,
 ) -> pd.DataFrame:
     """Période k (k ≥ 2) jugée avec le réglage choisi sur les périodes 1 à k-1."""
     rows = []
     for k in range(2, n_folds + 1):
-        chosen, within = choose(grid, list(range(1, k)), min_tpy, max_tpy)
+        chosen, within = choose(grid, list(range(1, k)), min_tpy, max_tpy, columns)
         mask = (grid["fold"] == k) & np.logical_and.reduce(
             [grid[c] == v for c, v in chosen.items()]
         )

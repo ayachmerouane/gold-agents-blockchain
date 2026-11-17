@@ -28,6 +28,7 @@ deux sont possibles, on suppose le PIRE (le stop d'abord).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any, Literal
@@ -201,28 +202,60 @@ def run_ict_backtest(
     end: date | None = None,
     ledger: Chain | None = None,
 ) -> BacktestResult:
-    """Simule la stratégie ICT de `start` à `end` sur `frame` (date, open, high, low, close).
+    """Simule la stratégie ICT journalière de `start` à `end` (date, open, high, low, close)."""
+    return run_order_backtest(
+        frame,
+        params.name,
+        lambda history: ict_order(history, params),
+        costs,
+        initial_capital,
+        start,
+        end,
+        max_hold=params.max_hold_days,
+        ledger=ledger,
+    )
 
-    Jour t : (1) sortie à l'ouverture si la durée maximale est atteinte ; (2) exécution
-    éventuelle de l'ordre écrit la veille, puis stop / objectif avec le plus haut et le
-    plus bas ; (3) valorisation à la clôture ; (4) ordre pour le lendemain, si on n'a pas
-    d'or. L'ordre du dernier jour n'est pas exécuté.
+
+def run_order_backtest(
+    frame: pd.DataFrame,
+    name: str,
+    decide: Callable[[pd.DataFrame], Order | None],
+    costs: CostModel,
+    initial_capital: float,
+    start: date,
+    end: date | None = None,
+    *,
+    max_hold: int,
+    exit_at_close: Callable[[pd.Timestamp], bool] | None = None,
+    intraday: bool = False,
+    ledger: Chain | None = None,
+) -> BacktestResult:
+    """Moteur des ordres conditionnels, en barres journalières ou intraday.
+
+    Barre t : (1) sortie à l'ouverture si `max_hold` barres sont passées ; (2) exécution
+    éventuelle de l'ordre écrit à la barre précédente, puis stop / objectif avec le plus
+    haut et le plus bas ; (3) sortie à la clôture si `exit_at_close(t)` (fin de séance) ;
+    (4) valorisation à la clôture ; (5) si on n'a pas d'or, `decide` reçoit les barres
+    jusqu'à t incluse, et seulement elles, et écrit l'ordre de la barre suivante.
+    L'ordre de la dernière barre n'est pas exécuté.
     """
     frame = frame.reset_index(drop=True)
-    days = frame["date"].map(lambda ts: pd.Timestamp(ts).date())
+    stamps = frame["date"].map(pd.Timestamp)
+    days = stamps.map(lambda ts: ts.date())
+    labels = stamps if intraday else days
     in_period = (days >= start) & ((days <= end) if end is not None else True)
     positions = frame.index[in_period]
     if len(positions) < 2:
-        raise ValueError("période de backtest trop courte (au moins 2 jours)")
+        raise ValueError("période de backtest trop courte (au moins 2 barres)")
 
     book = Portfolio(cash=initial_capital)
     trades: list[Trade] = []
     rows: list[dict[str, Any]] = []
-    pending: tuple[Order, date] | None = None
-    held: tuple[Order, date, int] | None = None  # ordre d'entrée, date de décision, jours
+    pending: tuple[Order, Any] | None = None
+    held: tuple[Order, Any, int] | None = None  # ordre d'entrée, décidé à, barres tenues
     last = positions[-1]
 
-    def trade(side: str, day: date, raw: float, decided: date, reason: str) -> Trade:
+    def trade(side: str, when: Any, raw: float, decided: Any, reason: str) -> Trade:
         if side == "BUY":
             price = costs.buy_price(raw)
             qty = book.cash / (price * (1 + costs.fee_rate))
@@ -232,37 +265,40 @@ def run_ict_backtest(
             price, qty = costs.sell_price(raw), book.qty
             fee = costs.fee(qty * price)
             book.sell(qty, price, fee)
-        t = Trade(decided, day, side, raw, price, qty, fee, abs(price - raw) * qty, reason)
+        t = Trade(decided, when, side, raw, price, qty, fee, abs(price - raw) * qty, reason)
         trades.append(t)
         return t
 
     for i in positions:
         row = frame.loc[i]
-        today = days[i]
+        now = labels[i]
         done: list[Trade] = []
         if held is not None:
-            order, decided, n_days = held
-            if n_days >= params.max_hold_days:
-                done.append(trade("SELL", today, float(row["open"]), decided, "durée maximale"))
+            order, decided, n_bars = held
+            if n_bars >= max_hold:
+                done.append(trade("SELL", now, float(row["open"]), decided, "durée maximale"))
                 held = None
             else:
                 out = exit_fill(order.stop, order.target, row, entry_day=False)
                 if out is not None:
-                    done.append(trade("SELL", today, out[0], decided, out[1]))
+                    done.append(trade("SELL", now, out[0], decided, out[1]))
                     held = None
                 else:
-                    held = (order, decided, n_days + 1)
+                    held = (order, decided, n_bars + 1)
         elif pending is not None:
             order, decided = pending
             fill = entry_fill(order, row)
             if fill is not None:
-                done.append(trade("BUY", today, fill, decided, order.reason))
+                done.append(trade("BUY", now, fill, decided, order.reason))
                 held = (order, decided, 1)
                 out = exit_fill(order.stop, order.target, row, entry_day=True)
                 if out is not None:
-                    done.append(trade("SELL", today, out[0], decided, out[1] + " (jour d'achat)"))
+                    done.append(trade("SELL", now, out[0], decided, out[1] + " (barre d'achat)"))
                     held = None
         pending = None
+        if held is not None and exit_at_close is not None and exit_at_close(stamps[i]):
+            done.append(trade("SELL", now, float(row["close"]), held[1], "fin de séance"))
+            held = None
 
         close = float(row["close"])
         value = book.value(close)
@@ -271,12 +307,12 @@ def run_ict_backtest(
         if i != last:
             action = "HOLD"
             if book.qty == 0:
-                new_order = ict_order(frame.iloc[: i + 1], params)
+                new_order = decide(frame.iloc[: i + 1])
                 if new_order is not None:
-                    pending, action = (new_order, today), "ORDER"
+                    pending, action = (new_order, now), "ORDER"
         rows.append(
             {
-                "date": today,
+                "date": now,
                 "close": close,
                 "cash": book.cash,
                 "qty": book.qty,
@@ -287,8 +323,8 @@ def run_ict_backtest(
         if ledger is not None:
             events: list[dict[str, Any]] = [{"type": "TRADE", **jsonable(asdict(t))} for t in done]
             if new_order is not None:
-                events.append({"type": "ORDER", "strategy": params.name, **asdict(new_order)})
+                events.append({"type": "ORDER", "strategy": name, **asdict(new_order)})
             events.append({"type": "PORTFOLIO", "cash": book.cash, "qty": book.qty, "value": value})
-            ledger.append(today.isoformat(), events)
+            ledger.append(now.isoformat(), events)
 
-    return BacktestResult(params.name, initial_capital, pd.DataFrame(rows), trades)
+    return BacktestResult(name, initial_capital, pd.DataFrame(rows), trades)
