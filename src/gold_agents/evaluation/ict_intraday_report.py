@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from gold_agents.config import IctIntradayConfig
+from gold_agents.config import IctIntradayConfig, IctTimeframe
 from gold_agents.evaluation.financial_metrics import summarize
 from gold_agents.evaluation.ict_report import _row
 from gold_agents.simulation.costs import CostModel
@@ -32,12 +32,11 @@ from gold_agents.simulation.strategies import BuyAndHold, SmaCrossover
 COLUMNS = ["entry", "swing", "target", "min_reward_risk"]
 
 
-def combos(cfg: IctIntradayConfig) -> list[IntradayParams]:
+def combos(cfg: IctIntradayConfig, tf: IctTimeframe) -> list[IntradayParams]:
     g = cfg.grid
-    zones = tuple((int(a), int(b)) for a, b in cfg.kill_zones)
     return [
-        IntradayParams(e, s, t, rr, zones, cfg.flat_hour, cfg.max_hold_bars)
-        for e, s, t, rr in itertools.product(g.entry, g.swing, g.target, g.min_reward_risk)
+        to_params({"entry": e, "swing": sw, "target": t, "min_reward_risk": rr}, cfg, tf)
+        for e, sw, t, rr in itertools.product(g.entry, tf.swing, g.target, g.min_reward_risk)
     ]
 
 
@@ -46,16 +45,16 @@ def _params(p: IntradayParams) -> dict[str, Any]:
     return {c: d[c] for c in COLUMNS}
 
 
-def to_params(chosen: dict[str, Any], cfg: IctIntradayConfig) -> IntradayParams:
-    zones = tuple((int(a), int(b)) for a, b in cfg.kill_zones)
+def to_params(chosen: dict[str, Any], cfg: IctIntradayConfig, tf: IctTimeframe) -> IntradayParams:
     return IntradayParams(
-        chosen["entry"],
-        int(chosen["swing"]),
-        chosen["target"],
-        float(chosen["min_reward_risk"]),
-        zones,
-        cfg.flat_hour,
-        cfg.max_hold_bars,
+        entry=chosen["entry"],
+        swing=int(chosen["swing"]),
+        target=chosen["target"],
+        min_reward_risk=float(chosen["min_reward_risk"]),
+        kill_zones=tuple((int(a), int(b)) for a, b in cfg.kill_zones),
+        flat_hour=cfg.flat_hour,
+        max_hold_hours=cfg.max_hold_hours,
+        bar_minutes=tf.bar_minutes,
     )
 
 
@@ -121,8 +120,9 @@ def random_sharpes(
     part = frame[(frame["trading_day"] >= start) & (frame["trading_day"] <= end)]
     days = np.asarray(sorted(part["trading_day"].unique()))
     hours = part["ny_hour"].to_numpy()
-    kz = np.array([in_kill_zone(int(h), params.kill_zones) for h in hours])
-    flat = hours == (params.flat_hour - 1) % 24
+    kz = np.array([in_kill_zone(int(h), params.kill_zones) for h in range(24)])[hours]
+    begin = hours * 60 + part["ny_minute"].to_numpy()
+    flat = (begin < params.flat_hour * 60) & (params.flat_hour * 60 <= begin + params.bar_minutes)
     by_day: dict[Any, tuple[np.ndarray, float | None]] = {}
     opens, closes, tdays = part["open"].to_numpy(), part["close"].to_numpy(), part["trading_day"]
     for day, idx in tdays.groupby(tdays).indices.items():
@@ -149,6 +149,7 @@ def random_references(
     wf: pd.DataFrame,
     folds: list[tuple[date, date]],
     cfg: IctIntradayConfig,
+    tf: IctTimeframe,
     costs: CostModel,
     runs: int,
     seed: int,
@@ -159,7 +160,7 @@ def random_references(
     for _, w in wf.iterrows():
         k = int(w["fold"])
         start, end = folds[k - 1]
-        p = to_params({c: w[c] for c in COLUMNS}, cfg)
+        p = to_params({c: w[c] for c in COLUMNS}, cfg, tf)
         s = random_sharpes(frame, start, end, int(w["n_trades"]) // 2, p, costs, runs, rng, rf)
         rows.append(
             {
@@ -180,6 +181,7 @@ def costs_sensitivity(
     wf: pd.DataFrame,
     folds: list[tuple[date, date]],
     cfg: IctIntradayConfig,
+    tf: IctTimeframe,
     costs: CostModel,
     capital: float,
     factors: list[float],
@@ -189,7 +191,7 @@ def costs_sensitivity(
     for _, w in wf.iterrows():
         k = int(w["fold"])
         start, end = folds[k - 1]
-        p = to_params({c: w[c] for c in COLUMNS}, cfg)
+        p = to_params({c: w[c] for c in COLUMNS}, cfg, tf)
         for f in factors:
             res = run_intraday_backtest(frame, p, costs.scaled(f), capital, start, end)
             ict = summarize(daily_equity(res), rf)
@@ -233,9 +235,10 @@ def markdown_report(
     final_within: bool,
     grid: pd.DataFrame,
     data_info: str,
+    label: str = "1 h",
 ) -> str:
     lines = [
-        "# Agent ICT intraday (barres 1 h) : walk-forward 2011-2021",
+        f"# Agent ICT intraday (barres {label}) : walk-forward 2011-2021",
         "",
         data_info,
         "",

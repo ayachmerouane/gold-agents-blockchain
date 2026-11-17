@@ -786,11 +786,15 @@ ICT_INTRADAY_OUT_OPTION = typer.Option(
 
 
 @app.command("ict-intraday")
-def ict_intraday(config: Path = CONFIG_OPTION, out_dir: Path = ICT_INTRADAY_OUT_OPTION) -> None:
-    """Agent ICT intraday (1 h) : grille et walk-forward 2011-2021 (le test n'est pas lu)."""
+def ict_intraday(
+    config: Path = CONFIG_OPTION,
+    out_dir: Path = ICT_INTRADAY_OUT_OPTION,
+    timeframe: str = typer.Option("1h", "--timeframe", "-t", help="Durée de barre : 1h, 15m, 5m."),
+) -> None:
+    """Agent ICT intraday : grille et walk-forward 2011-2021 (le test n'est pas lu)."""
     import json
 
-    from gold_agents.data.intraday import read_mt4_intraday
+    from gold_agents.data.intraday import bar_minutes, read_mt4_intraday
     from gold_agents.data.update import sha256_file
     from gold_agents.evaluation import ict_intraday_report as ir
     from gold_agents.evaluation.ict_report import choose, walk_forward
@@ -801,18 +805,30 @@ def ict_intraday(config: Path = CONFIG_OPTION, out_dir: Path = ICT_INTRADAY_OUT_
     if ic is None or cfg.tuning is None:
         typer.echo("Sections `ict_intraday` et `tuning` requises.", err=True)
         raise typer.Exit(code=1)
-    if not ic.path.exists():
-        typer.echo(f"{ic.path} absent : télécharger XAU_1h_data.csv (Kaggle).", err=True)
+    if timeframe not in ic.timeframes:
+        typer.echo(
+            f"Durée inconnue : {timeframe} (connues : {', '.join(ic.timeframes)}).", err=True
+        )
         raise typer.Exit(code=1)
-    frame = read_mt4_intraday(ic.path, ic.server_tz)
+    tf = ic.timeframes[timeframe]
+    if not tf.path.exists():
+        typer.echo(f"{tf.path} absent : télécharger les barres {timeframe} (Kaggle).", err=True)
+        raise typer.Exit(code=1)
+    frame = read_mt4_intraday(tf.path, ic.server_tz)
+    found = bar_minutes(frame)
+    if found != tf.bar_minutes:
+        typer.echo(f"{tf.path.name} : barres de {found} min, {tf.bar_minutes} attendues.", err=True)
+        raise typer.Exit(code=1)
     frame = frame[frame["trading_day"] < cfg.splits.test_start].reset_index(drop=True)
     folds = [(a, b) for a, b in cfg.tuning.folds]
     tc, sim = cfg.tuning, cfg.simulation
     costs = CostModel(sim.fee_rate, sim.slippage)
     rf, capital = sim.risk_free_rate, sim.initial_capital
-    params = ir.combos(ic)
+    params = ir.combos(ic, tf)
+    label = timeframe.replace("h", " h").replace("m", " min")
+    out_dir = out_dir / timeframe
     info = (
-        f"Données : {ic.path.name} (SHA-256 {sha256_file(ic.path)[:12]}…), heure serveur "
+        f"Données : {tf.path.name} (SHA-256 {sha256_file(tf.path)[:12]}…), heure serveur "
         f"{ic.server_tz}, {len(frame)} barres du {frame['trading_day'].iloc[0]} au "
         f"{frame['trading_day'].iloc[-1]} (avant le test)."
     )
@@ -823,8 +839,10 @@ def ict_intraday(config: Path = CONFIG_OPTION, out_dir: Path = ICT_INTRADAY_OUT_
     refs = ir.references(daily, folds, costs, capital, rf)
     lo, hi = tc.min_trades_per_year, tc.max_trades_per_year
     wf = walk_forward(grid, refs, len(folds), lo, hi, ir.COLUMNS)
-    rand = ir.random_references(frame, wf, folds, ic, costs, tc.random_runs, cfg.seed, rf)
-    sens = ir.costs_sensitivity(frame, daily, wf, folds, ic, costs, capital, tc.costs_factors, rf)
+    rand = ir.random_references(frame, wf, folds, ic, tf, costs, tc.random_runs, cfg.seed, rf)
+    sens = ir.costs_sensitivity(
+        frame, daily, wf, folds, ic, tf, costs, capital, tc.costs_factors, rf
+    )
     final, final_ok = choose(grid, list(range(1, len(folds) + 1)), lo, hi, ir.COLUMNS)
     out_dir.mkdir(parents=True, exist_ok=True)
     grid.to_csv(out_dir / "grid.csv", index=False)
@@ -840,7 +858,7 @@ def ict_intraday(config: Path = CONFIG_OPTION, out_dir: Path = ICT_INTRADAY_OUT_
         ),
         encoding="utf-8",
     )
-    report = ir.markdown_report(len(params), wf, rand, sens, final, final_ok, grid, info)
+    report = ir.markdown_report(len(params), wf, rand, sens, final, final_ok, grid, info, label)
     (out_dir / "ict_intraday_report.md").write_text(report, encoding="utf-8")
     typer.echo(report)
     typer.echo(f"Résultats : {out_dir}")

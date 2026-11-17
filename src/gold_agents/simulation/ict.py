@@ -28,7 +28,7 @@ deux sont possibles, on suppose le PIRE (le stop d'abord).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any, Literal
@@ -80,14 +80,15 @@ def swing_points(high: np.ndarray, low: np.ndarray, n: int) -> tuple[np.ndarray,
     Un point d'indice j n'est connu qu'au jour j + n : c'est à l'appelant de ne garder
     que les points confirmés à la date où il décide.
     """
-    highs, lows = [], []
-    for j in range(n, len(high) - n):
-        part_h, part_l = high[j - n : j + n + 1], low[j - n : j + n + 1]
-        if high[j] == part_h.max() and (part_h == high[j]).sum() == 1:
-            highs.append(j)
-        if low[j] == part_l.min() and (part_l == low[j]).sum() == 1:
-            lows.append(j)
-    return np.asarray(highs, dtype=int), np.asarray(lows, dtype=int)
+    if len(high) < 2 * n + 1:
+        empty = np.asarray([], dtype=int)
+        return empty, empty
+    win_h = np.lib.stride_tricks.sliding_window_view(high, 2 * n + 1)
+    win_l = np.lib.stride_tricks.sliding_window_view(low, 2 * n + 1)
+    mid_h, mid_l = high[n : len(high) - n], low[n : len(low) - n]
+    is_high = (mid_h == win_h.max(axis=1)) & ((win_h == mid_h[:, None]).sum(axis=1) == 1)
+    is_low = (mid_l == win_l.min(axis=1)) & ((win_l == mid_l[:, None]).sum(axis=1) == 1)
+    return np.flatnonzero(is_high) + n, np.flatnonzero(is_low) + n
 
 
 def _last_confirmed(points: np.ndarray, known_on: int, n: int) -> int | None:
@@ -153,7 +154,7 @@ def ict_order(history: pd.DataFrame, params: IctParams) -> Order | None:
     return Order(params.entry, level, stop, range_high, f"{reason}, objectif {range_high:.2f}")
 
 
-def entry_fill(order: Order, bar: pd.Series) -> float | None:
+def entry_fill(order: Order, bar: Mapping[str, float]) -> float | None:
     """Prix (avant slippage) auquel l'ordre est exécuté pendant `bar`, ou `None`.
 
     Si l'ouverture dépasse déjà le niveau, on est servi à l'ouverture (écart de cotation).
@@ -173,7 +174,7 @@ def entry_fill(order: Order, bar: pd.Series) -> float | None:
 
 
 def exit_fill(
-    stop: float, target: float, bar: pd.Series, entry_day: bool
+    stop: float, target: float, bar: Mapping[str, float], entry_day: bool
 ) -> tuple[float, str] | None:
     """Sortie pendant `bar` : (prix avant slippage, règle), ou `None`.
 
@@ -227,6 +228,7 @@ def run_order_backtest(
     *,
     max_hold: int,
     exit_at_close: Callable[[pd.Timestamp], bool] | None = None,
+    may_decide: np.ndarray | None = None,
     intraday: bool = False,
     ledger: Chain | None = None,
 ) -> BacktestResult:
@@ -237,9 +239,12 @@ def run_order_backtest(
     haut et le plus bas ; (3) sortie à la clôture si `exit_at_close(t)` (fin de séance) ;
     (4) valorisation à la clôture ; (5) si on n'a pas d'or, `decide` reçoit les barres
     jusqu'à t incluse, et seulement elles, et écrit l'ordre de la barre suivante.
-    L'ordre de la dernière barre n'est pas exécuté.
+    L'ordre de la dernière barre n'est pas exécuté. `may_decide[t]` (facultatif, calculé
+    d'après la seule barre t, par exemple « la barre suivante est en kill zone ») évite
+    d'appeler `decide` quand aucun ordre n'est possible.
     """
     frame = frame.reset_index(drop=True)
+    cols = {c: frame[c].to_numpy(dtype="float64") for c in ("open", "high", "low", "close")}
     stamps = frame["date"].map(pd.Timestamp)
     days = stamps.map(lambda ts: ts.date())
     labels = stamps if intraday else days
@@ -269,9 +274,11 @@ def run_order_backtest(
         trades.append(t)
         return t
 
+    label_list = list(labels)
+    stamp_list = list(stamps)
     for i in positions:
-        row = frame.loc[i]
-        now = labels[i]
+        row = {c: float(v[i]) for c, v in cols.items()}
+        now = label_list[i]
         done: list[Trade] = []
         if held is not None:
             order, decided, n_bars = held
@@ -296,7 +303,7 @@ def run_order_backtest(
                     done.append(trade("SELL", now, out[0], decided, out[1] + " (barre d'achat)"))
                     held = None
         pending = None
-        if held is not None and exit_at_close is not None and exit_at_close(stamps[i]):
+        if held is not None and exit_at_close is not None and exit_at_close(stamp_list[i]):
             done.append(trade("SELL", now, float(row["close"]), held[1], "fin de séance"))
             held = None
 
@@ -306,7 +313,7 @@ def run_order_backtest(
         new_order = None
         if i != last:
             action = "HOLD"
-            if book.qty == 0:
+            if book.qty == 0 and (may_decide is None or may_decide[i]):
                 new_order = decide(frame.iloc[: i + 1])
                 if new_order is not None:
                     pending, action = (new_order, now), "ORDER"

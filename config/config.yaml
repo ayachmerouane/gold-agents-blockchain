@@ -115,19 +115,24 @@ ict:
   max_hold_days: 20     # sortie à l'ouverture après 20 jours si ni stop ni objectif
 
 ict_intraday:
-  # Agent ICT intraday (gold-agents ict-intraday) : il suit le marché barre par barre
-  # (1 h) et décide pendant la séance. Réglé et jugé en walk-forward sur les périodes
-  # de `tuning` (2011-2021) ; 2022+ jamais lu. Heures de New York.
-  path: data/raw/intraday/XAU_1h_data.csv   # Kaggle, même dataset que le journalier
-  server_tz: ny+7       # heure du fichier MT4 = New York + 7 h (à vérifier sur les données)
+  # Agent ICT intraday (gold-agents ict-intraday --timeframe 1h|15m|5m) : il suit le
+  # marché barre par barre et décide pendant la séance. Réglé et jugé en walk-forward sur
+  # les périodes de `tuning` (2011-2021) ; 2022+ jamais lu. Heures de New York.
+  server_tz: ny+7       # heure des fichiers MT4 = New York + 7 h (vérifié sur le 1 h)
+  timeframes:
+    # Swing (barres de chaque côté d'un sommet), fixé AVANT de lire les données 15 min
+    # et 5 min (17/11/2026) : petits fractals, un peu plus larges sur les barres courtes
+    # pour ne pas compter chaque bruit comme une structure.
+    1h:  {path: data/raw/intraday/XAU_1h_data.csv, bar_minutes: 60, swing: [1, 2]}
+    15m: {path: data/raw/intraday/XAU_15m_data.csv.gz, bar_minutes: 15, swing: [2, 3]}
+    5m:  {path: data/raw/intraday/XAU_5m_data.csv.gz, bar_minutes: 5, swing: [3, 5]}
   grid:
     entry: [limit_fvg, stop_pdh]
-    swing: [1, 2]
     # Objectif : liquidité opposée (haut asiatique, plus haut de la veille) ou R fixe.
-    # `fixed_r` ajouté après le 1er run (17/11/2026) : l'objectif asiatique était presque
-    # toujours déjà atteint au moment du MSS (2 à 7 trades par période). Grille déclarée.
+    # `fixed_r` ajouté après le 1er run en 1 h (17/11/2026) : l'objectif asiatique était
+    # presque toujours déjà atteint au moment du MSS (2 à 7 trades par période).
     target: [asian_high, prev_day_high, fixed_r]
     min_reward_risk: [1.0, 2.0]
   kill_zones: [[2, 5], [7, 10]]   # Londres 2 h-5 h, New York 7 h-10 h
   flat_hour: 16         # tout est vendu à 16 h (New York) : jamais de position la nuit
-  max_hold_bars: 24
+  max_hold_hours: 24

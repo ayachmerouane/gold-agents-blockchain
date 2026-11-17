@@ -106,3 +106,48 @@ def test_fixed_r_target() -> None:
     order = intraday_order(_frame(SETUP), IntradayParams(target="fixed_r", min_reward_risk=2.0))
     assert order is not None
     assert (order.level, order.stop, order.target) == (101.0, 99.0, 105.0)
+
+
+def test_gzip_and_bar_length(tmp_path: Path) -> None:
+    """Fichier compressé lu comme le CSV ; durée de barre retrouvée (15 min)."""
+    import gzip
+
+    from gold_agents.data.intraday import bar_minutes
+
+    gz = tmp_path / "XAU_15m_data.csv.gz"
+    lines = ["Date;Open;High;Low;Close;Volume"] + [
+        f"2024.01.15 01:{m:02d};2050;2052;2049;2051;10" for m in (0, 15, 30, 45)
+    ]
+    gz.write_bytes(gzip.compress("\n".join(lines).encode()))
+    df = read_mt4_intraday(gz, "ny+7")
+    assert len(df) == 4 and list(df["ny_minute"]) == [0, 15, 30, 45]
+    assert bar_minutes(df) == 15
+
+
+def test_15_minute_bars_never_overnight() -> None:
+    """Barres de 15 min : la position est vendue à la barre qui finit à 16 h, pas avant."""
+    rng = np.random.default_rng(3)
+    idx = pd.date_range("2024-03-04 18:00", periods=4 * 24 * 10, freq="15min", tz=NY)
+    idx = idx[(idx.hour != 17) & (idx.day_of_week < 5)]
+    c = 2000 * np.exp(np.cumsum(rng.normal(0, 0.001, len(idx))))
+    o = np.r_[c[0], c[:-1]]
+    sp = np.abs(rng.normal(0, 0.001, len(idx))) * c
+    frame = add_session_columns(
+        pd.DataFrame(
+            {
+                "date": idx.tz_convert("UTC"),
+                "open": o,
+                "high": np.maximum(o, c) + sp,
+                "low": np.minimum(o, c) - sp,
+                "close": c,
+            }
+        )
+    )
+    params = IntradayParams(target="fixed_r", min_reward_risk=0.5, bar_minutes=15, swing=2)
+    assert params.max_hold_bars == 96
+    res = run_intraday_backtest(frame, params, CostModel(0.0, 0.0), 1000.0, date(2024, 3, 4))
+    eq = res.equity
+    ny = pd.to_datetime(eq["date"], utc=True).dt.tz_convert(NY)
+    minutes = ny.dt.hour * 60 + ny.dt.minute
+    # Barre 15 h 45 -> 16 h : vente à sa clôture ; aucune position de 16 h à 18 h.
+    assert (eq.loc[(minutes >= 15 * 60 + 45) & (minutes < 18 * 60), "qty"] == 0).all()

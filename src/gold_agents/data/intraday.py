@@ -5,13 +5,15 @@ courtiers alignent leur journée sur la clôture de New York (17 h) : leur heure
 celle de New York + 7 h, été comme hiver (« ny+7 »). Les séances ICT (Asie, Londres,
 New York) sont définies à l'heure de New York : on convertit donc chaque barre.
 
-Colonnes ajoutées : `date` (UTC), `ny` (heure de New York), `ny_hour` et `trading_day`,
+Colonnes ajoutées : `date` (UTC), `ny` (heure de New York), `ny_hour`, `ny_minute` et
+`trading_day`,
 le jour de cotation qui commence à 18 h à New York (la barre de 18 h appartient au
 lendemain), comme la bougie journalière du courtier.
 """
 
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
 import pandas as pd
@@ -39,18 +41,21 @@ def add_session_columns(frame: pd.DataFrame) -> pd.DataFrame:
     ny = pd.to_datetime(out["date"], utc=True).dt.tz_convert(NEW_YORK)
     out["ny"] = ny
     out["ny_hour"] = ny.dt.hour.astype("int64")
+    out["ny_minute"] = ny.dt.minute.astype("int64")
     # Le jour de cotation commence à 18 h (New York) : on avance de 6 h puis on prend la date.
     out["trading_day"] = (ny + pd.Timedelta(hours=6)).dt.date
     return out
 
 
 def read_mt4_intraday(path: Path | str, server_tz: str = "ny+7") -> pd.DataFrame:
-    """Lit un CSV MT4 intraday (`Date;Open;High;Low;Close;Volume`), trié, sans doublon."""
+    """Lit un CSV MT4 intraday (`Date;Open;High;Low;Close;Volume`, `.csv` ou `.csv.gz`),
+    trié, sans doublon."""
     path = Path(path)
-    with path.open(encoding="utf-8-sig") as f:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8-sig") as f:
         header = f.readline()
     sep = ";" if header.count(";") > header.count(",") else ","
-    raw = pd.read_csv(path, sep=sep, encoding="utf-8-sig")
+    raw = pd.read_csv(path, sep=sep, encoding="utf-8-sig")  # .csv ou .csv.gz
     raw.columns = [str(c).strip().lower() for c in raw.columns]
     local = pd.to_datetime(raw["date"].astype(str).str.strip(), format=_MT4_FORMAT)
     out = pd.DataFrame(
@@ -67,6 +72,12 @@ def read_mt4_intraday(path: Path | str, server_tz: str = "ny+7") -> pd.DataFrame
     out.loc[bad, "high"] = out.loc[bad, ["open", "high", "close"]].max(axis=1)
     out.loc[bad, "low"] = out.loc[bad, ["open", "low", "close"]].min(axis=1)
     return add_session_columns(out)
+
+
+def bar_minutes(frame: pd.DataFrame) -> int:
+    """Durée d'une barre en minutes (écart le plus fréquent entre deux barres)."""
+    gaps = pd.to_datetime(frame["date"]).diff().dropna().dt.total_seconds() // 60
+    return int(gaps.mode().iloc[0])
 
 
 def daily_from_intraday(frame: pd.DataFrame) -> pd.DataFrame:

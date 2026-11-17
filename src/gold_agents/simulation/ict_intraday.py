@@ -51,21 +51,38 @@ class IntradayParams:
     min_reward_risk: float = 1.0
     kill_zones: tuple[tuple[int, int], ...] = field(default=((2, 5), (7, 10)))
     flat_hour: int = 16  # tout est vendu à la clôture de la barre qui finit à 16 h
-    max_hold_bars: int = 24
+    max_hold_hours: int = 24
+    bar_minutes: int = 60  # durée d'une barre : 60, 15, 5…
 
     @property
     def name(self) -> str:
-        return f"ict_1h_{self.entry}_{self.target}"
+        return f"ict_{self.bar_minutes}m_{self.entry}_{self.target}"
+
+    @property
+    def max_hold_bars(self) -> int:
+        return self.max_hold_hours * 60 // self.bar_minutes
+
+    @property
+    def window(self) -> int:
+        """Barres relues à chaque décision : la veille, le jour en cours et une marge."""
+        return 3 * 24 * 60 // self.bar_minutes + 10 * self.swing
 
 
 def in_kill_zone(hour: int, zones: tuple[tuple[int, int], ...]) -> bool:
     return any(a <= hour < b for a, b in zones)
 
 
+def next_bar_hours(hours: np.ndarray, minutes: np.ndarray, bar_minutes: int) -> np.ndarray:
+    """Heure (New York) du début de la barre suivante, d'après la barre courante seule."""
+    return ((hours * 60 + minutes + bar_minutes) // 60) % 24
+
+
 def intraday_order(history: pd.DataFrame, params: IntradayParams) -> Order | None:
     """Ordre pour la barre suivante, ou `None`. N'utilise que `history` (barres closes)."""
-    hour = int(history["ny_hour"].to_numpy()[-1])
-    next_hour = (hour + 1) % 24
+    history = history.iloc[-params.window :]
+    last_h = history["ny_hour"].to_numpy()[-1:]
+    last_m = history["ny_minute"].to_numpy()[-1:]
+    next_hour = int(next_bar_hours(last_h, last_m, params.bar_minutes)[0])
     if not in_kill_zone(next_hour, params.kill_zones):
         return None
     day = history["trading_day"].iat[-1]
@@ -151,10 +168,15 @@ def run_intraday_backtest(
     ledger: Chain | None = None,
 ) -> BacktestResult:
     """Simule l'agent intraday ; `frame` vient de `data.intraday` (UTC + colonnes de séance)."""
-    flat = params.flat_hour
+    flat = params.flat_hour * 60
+    ny = pd.to_datetime(frame["date"], utc=True).dt.tz_convert("America/New_York")
+    nxt = next_bar_hours(ny.dt.hour.to_numpy(), ny.dt.minute.to_numpy(), params.bar_minutes)
+    may_decide = np.array([in_kill_zone(int(h), params.kill_zones) for h in range(24)])[nxt]
 
     def exit_at_close(ts: pd.Timestamp) -> bool:
-        return int(ts.tz_convert("America/New_York").hour) == (flat - 1) % 24
+        ny_ts = ts.tz_convert("America/New_York")
+        begin = ny_ts.hour * 60 + ny_ts.minute
+        return begin < flat <= begin + params.bar_minutes
 
     return run_order_backtest(
         frame,
@@ -166,6 +188,7 @@ def run_intraday_backtest(
         end,
         max_hold=params.max_hold_bars,
         exit_at_close=exit_at_close,
+        may_decide=may_decide,
         intraday=True,
         ledger=ledger,
     )

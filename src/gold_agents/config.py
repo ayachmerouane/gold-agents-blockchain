@@ -205,24 +205,32 @@ IctTarget = Literal["asian_high", "prev_day_high", "fixed_r"]
 
 class IctIntradayGrid(_Strict):
     entry: list[IctEntry] = Field(default=["limit_fvg", "stop_pdh"], min_length=1)
-    swing: list[int] = Field(default=[1, 2], min_length=1)
     target: list[IctTarget] = Field(default=["asian_high", "prev_day_high"], min_length=1)
     min_reward_risk: list[float] = Field(default=[1.0, 2.0], min_length=1)
 
 
-class IctIntradayConfig(_Strict):
-    """Agent ICT intraday (barres d'une heure) : réglé en walk-forward sur `tuning.folds`.
+class IctTimeframe(_Strict):
+    """Une durée de barre : son fichier et les tailles de swing (en barres) à essayer."""
 
-    Les séances sont à l'heure de New York. `server_tz` dit comment lire l'heure du
-    fichier MT4 : « ny+7 » (journée alignée sur la clôture de New York), « UTC »…
+    path: Path
+    bar_minutes: int = Field(gt=0, le=60)
+    swing: list[int] = Field(min_length=1)
+
+
+class IctIntradayConfig(_Strict):
+    """Agent ICT intraday : réglé en walk-forward sur `tuning.folds`, une durée de barre à
+    la fois (1 h, 15 min, 5 min).
+
+    Les séances sont à l'heure de New York. `server_tz` dit comment lire l'heure des
+    fichiers MT4 : « ny+7 » (journée alignée sur la clôture de New York), « UTC »…
     """
 
-    path: Path = Path("data/raw/intraday/XAU_1h_data.csv")
     server_tz: str = "ny+7"
+    timeframes: dict[str, IctTimeframe] = Field(min_length=1)
     grid: IctIntradayGrid = IctIntradayGrid()
     kill_zones: list[tuple[int, int]] = Field(default=[(2, 5), (7, 10)], min_length=1)
     flat_hour: int = Field(default=16, ge=1, le=23)
-    max_hold_bars: int = Field(default=24, ge=1)
+    max_hold_hours: int = Field(default=24, ge=1)
 
 
 class Config(_Strict):
