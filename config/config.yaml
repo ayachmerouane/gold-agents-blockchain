@@ -97,3 +97,19 @@ live:
   seeds: [0, 1, 2]      # graines par réseau (comme le walk-forward)
   early_stop_days: 250  # la dernière année du passé sert à l'arrêt anticipé
   mc_seed: 0            # graine du MC Dropout (σ̂ reproductible)
+
+ict:
+  # Stratégie ICT à règles (gold-agents ict), sans modèle de prévision. Réglée et jugée
+  # en walk-forward sur les périodes de `tuning` (2011-2021) : la période k est jugée
+  # avec le réglage choisi sur les périodes 1 à k-1. Le test (2022+) n'est jamais lu.
+  # Chaque soir, un ordre conditionnel valable un jour est écrit AVANT l'ouverture ;
+  # le marché décide s'il est exécuté (plus haut / plus bas du jour, pire cas).
+  grid:
+    entry:
+      - limit_fvg       # achat à cours limité : retour du prix dans le FVG
+      - stop_pdh        # achat si le prix casse le plus haut de la veille (réaction)
+    swing: [1, 2, 3]            # sommet/creux confirmé par n bougies de chaque côté
+    sweep_lookback: [10, 20]    # sweep de liquidité il y a au plus n jours
+    discount: [0.5, 1.0]        # entrée sous ce niveau du range (1.0 : sans filtre)
+    min_reward_risk: [0.5, 1.0, 2.0]  # objectif ≥ n × risque, sinon pas d'ordre
+  max_hold_days: 20     # sortie à l'ouverture après 20 jours si ni stop ni objectif
