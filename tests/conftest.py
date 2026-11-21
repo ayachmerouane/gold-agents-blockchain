@@ -46,3 +46,29 @@ def clean_series(cfg: Config) -> pd.DataFrame:
     # Un trou de 10 jours ouvrés non comblé dans le test : rendement invalide au retour.
     raw = raw[~raw["date"].isin(pd.bdate_range("2023-03-06", "2023-03-17", tz="UTC"))]
     return clean(normalize(raw, "kaggle"), cfg.splits)
+
+
+@pytest.fixture(scope="session")
+def hourly_series() -> pd.DataFrame:
+    """Barres d'une heure synthétiques (240 jours de 2019), sans les week-ends."""
+    from gold_agents.data.intraday import add_session_columns
+
+    rng = np.random.default_rng(1)
+    idx = pd.date_range("2019-01-01", periods=240 * 24, freq="h", tz="UTC")
+    ny = idx.tz_convert("America/New_York")
+    weekend = (ny.day_of_week == 5) | ((ny.day_of_week == 4) & (ny.hour >= 17))
+    weekend |= ((ny.day_of_week == 6) & (ny.hour < 18)) | (ny.hour == 17)
+    idx = idx[~weekend]
+    c = 1300 * np.exp(np.cumsum(rng.normal(0, 0.002, len(idx))))
+    o = np.r_[c[0], c[:-1]]
+    sp = np.abs(rng.normal(0, 0.0015, len(idx))) * c
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": o,
+            "high": np.maximum(o, c) + sp,
+            "low": np.minimum(o, c) - sp,
+            "close": c,
+        }
+    )
+    return add_session_columns(frame)
