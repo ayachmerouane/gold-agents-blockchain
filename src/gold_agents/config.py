@@ -168,6 +168,71 @@ class LiveConfig(_Strict):
     mc_seed: int = 0  # graine du MC Dropout (σ̂ reproductible)
 
 
+IctEntry = Literal["limit_fvg", "stop_pdh"]
+
+
+class IctGrid(_Strict):
+    """Grille grossière de la stratégie ICT (R4 : peu de valeurs par paramètre)."""
+
+    entry: list[IctEntry] = Field(default=["limit_fvg", "stop_pdh"], min_length=1)
+    swing: list[int] = Field(default=[1, 2, 3], min_length=1)
+    sweep_lookback: list[int] = Field(default=[10, 20], min_length=1)
+    discount: list[float] = Field(default=[0.5, 1.0], min_length=1)  # 1.0 : sans filtre
+    min_reward_risk: list[float] = Field(default=[0.5, 1.0, 2.0], min_length=1)
+
+    @model_validator(mode="after")
+    def _valid(self) -> IctGrid:
+        if min(self.swing) < 1 or min(self.sweep_lookback) < 1:
+            raise ValueError("ict : swing et sweep_lookback valent au moins 1")
+        if not all(0 < x <= 1 for x in self.discount) or min(self.min_reward_risk) <= 0:
+            raise ValueError("ict : discount dans ]0, 1], min_reward_risk > 0")
+        return self
+
+
+class IctConfig(_Strict):
+    """Stratégie ICT à règles (sans modèle), réglée et jugée en walk-forward avant le test.
+
+    Mêmes périodes et même règle de choix que la phase 6 (`tuning`) : la période k est
+    jugée avec le réglage choisi sur les périodes 1 à k-1. Le test n'est jamais lu.
+    """
+
+    grid: IctGrid = IctGrid()
+    max_hold_days: int = Field(default=20, ge=1)  # sortie au plus tard après n jours
+
+
+IctTarget = Literal["asian_high", "prev_day_high", "fixed_r"]
+
+
+class IctIntradayGrid(_Strict):
+    entry: list[IctEntry] = Field(default=["limit_fvg", "stop_pdh"], min_length=1)
+    target: list[IctTarget] = Field(default=["asian_high", "prev_day_high"], min_length=1)
+    min_reward_risk: list[float] = Field(default=[1.0, 2.0], min_length=1)
+
+
+class IctTimeframe(_Strict):
+    """Une durée de barre : son fichier et les tailles de swing (en barres) à essayer."""
+
+    path: Path
+    bar_minutes: int = Field(gt=0, le=60)
+    swing: list[int] = Field(min_length=1)
+
+
+class IctIntradayConfig(_Strict):
+    """Agent ICT intraday : réglé en walk-forward sur `tuning.folds`, une durée de barre à
+    la fois (1 h, 15 min, 5 min).
+
+    Les séances sont à l'heure de New York. `server_tz` dit comment lire l'heure des
+    fichiers MT4 : « ny+7 » (journée alignée sur la clôture de New York), « UTC »…
+    """
+
+    server_tz: str = "ny+7"
+    timeframes: dict[str, IctTimeframe] = Field(min_length=1)
+    grid: IctIntradayGrid = IctIntradayGrid()
+    kill_zones: list[tuple[int, int]] = Field(default=[(2, 5), (7, 10)], min_length=1)
+    flat_hour: int = Field(default=16, ge=1, le=23)
+    max_hold_hours: int = Field(default=24, ge=1)
+
+
 class Config(_Strict):
     seed: int
     data: DataConfig
@@ -179,11 +244,15 @@ class Config(_Strict):
     models: ModelsConfig = ModelsConfig()
     tuning: TuningConfig | None = None
     live: LiveConfig | None = None
+    ict: IctConfig | None = None
+    ict_intraday: IctIntradayConfig | None = None
 
     @model_validator(mode="after")
     def _tuning_before_test(self) -> Config:
         if self.tuning is not None and self.tuning.folds[-1][1] >= self.splits.test_start:
             raise ValueError("le walk-forward ne doit jamais toucher le test")
+        if (self.ict is not None or self.ict_intraday is not None) and self.tuning is None:
+            raise ValueError("ict : la section `tuning` (périodes du walk-forward) est requise")
         return self
 
 

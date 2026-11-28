@@ -719,6 +719,156 @@ MOVES_OPTION = typer.Option(
 )
 
 
+ICT_OUT_OPTION = typer.Option(
+    Path("outputs/results/ict"), "--out", help="Dossier des résultats de la stratégie ICT."
+)
+
+
+@app.command()
+def ict(config: Path = CONFIG_OPTION, out_dir: Path = ICT_OUT_OPTION) -> None:
+    """Stratégie ICT à règles : grille et walk-forward 2011-2021 (le test n'est pas lu)."""
+    import json
+
+    import pandas as pd
+
+    from gold_agents.evaluation import ict_report as ir
+    from gold_agents.simulation.costs import CostModel
+
+    cfg = load_config(config)
+    if cfg.ict is None or cfg.tuning is None:
+        typer.echo("Sections `ict` et `tuning` requises dans la configuration.", err=True)
+        raise typer.Exit(code=1)
+    path = cfg.data.processed_dir / "xau_1d_clean.parquet"
+    if not path.exists():
+        typer.echo(f"{path} absent : lancer d'abord `uv run gold-agents clean`.", err=True)
+        raise typer.Exit(code=1)
+    frame = pd.read_parquet(path, columns=["date", "open", "high", "low", "close"])
+    days = pd.to_datetime(frame["date"]).dt.tz_localize(None).dt.date
+    frame = frame[days < cfg.splits.test_start].reset_index(drop=True)  # jamais le test
+    folds = [(a, b) for a, b in cfg.tuning.folds]
+    tc, sim = cfg.tuning, cfg.simulation
+    costs = CostModel(sim.fee_rate, sim.slippage)
+    rf, capital = sim.risk_free_rate, sim.initial_capital
+    combos = ir.ict_combos(cfg.ict)
+    typer.echo(f"{len(combos)} réglages x {len(folds)} périodes, test non lu.")
+    grid = ir.run_grid(frame, combos, folds, costs, capital, rf)
+    refs = ir.references(frame, folds, costs, capital, rf)
+    lo, hi = tc.min_trades_per_year, tc.max_trades_per_year
+    wf = ir.walk_forward(grid, refs, len(folds), lo, hi)
+    rand = ir.random_references(frame, wf, folds, costs, capital, tc.random_runs, cfg.seed, rf)
+    sens = ir.costs_sensitivity(
+        frame, wf, folds, costs, capital, tc.costs_factors, cfg.ict.max_hold_days, rf
+    )
+    final, final_ok = ir.choose(grid, list(range(1, len(folds) + 1)), lo, hi)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    grid.to_csv(out_dir / "grid.csv", index=False)
+    refs.to_csv(out_dir / "references.csv", index=False)
+    wf.to_csv(out_dir / "walk_forward.csv", index=False)
+    rand.to_csv(out_dir / "random_references.csv", index=False)
+    sens.to_csv(out_dir / "costs.csv", index=False)
+    (out_dir / "final_choice.json").write_text(
+        json.dumps(
+            {**{k: _plain(v) for k, v in final.items()}, "trades_ok": final_ok},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    report = ir.markdown_report(cfg, len(combos), wf, rand, sens, final, final_ok, grid)
+    (out_dir / "ict_report.md").write_text(report, encoding="utf-8")
+    typer.echo(report)
+    typer.echo(f"Résultats : {out_dir}")
+
+
+ICT_INTRADAY_OUT_OPTION = typer.Option(
+    Path("outputs/results/ict_intraday"), "--out", help="Dossier des résultats (intraday)."
+)
+
+
+@app.command("ict-intraday")
+def ict_intraday(
+    config: Path = CONFIG_OPTION,
+    out_dir: Path = ICT_INTRADAY_OUT_OPTION,
+    timeframe: str = typer.Option("1h", "--timeframe", "-t", help="Durée de barre : 1h, 15m, 5m."),
+) -> None:
+    """Agent ICT intraday : grille et walk-forward 2011-2021 (le test n'est pas lu)."""
+    import json
+
+    from gold_agents.data.intraday import bar_minutes, read_mt4_intraday
+    from gold_agents.data.update import sha256_file
+    from gold_agents.evaluation import ict_intraday_report as ir
+    from gold_agents.evaluation.ict_report import choose, walk_forward
+    from gold_agents.simulation.costs import CostModel
+
+    cfg = load_config(config)
+    ic = cfg.ict_intraday
+    if ic is None or cfg.tuning is None:
+        typer.echo("Sections `ict_intraday` et `tuning` requises.", err=True)
+        raise typer.Exit(code=1)
+    if timeframe not in ic.timeframes:
+        typer.echo(
+            f"Durée inconnue : {timeframe} (connues : {', '.join(ic.timeframes)}).", err=True
+        )
+        raise typer.Exit(code=1)
+    tf = ic.timeframes[timeframe]
+    if not tf.path.exists():
+        typer.echo(f"{tf.path} absent : télécharger les barres {timeframe} (Kaggle).", err=True)
+        raise typer.Exit(code=1)
+    frame = read_mt4_intraday(tf.path, ic.server_tz)
+    found = bar_minutes(frame)
+    if found != tf.bar_minutes:
+        typer.echo(f"{tf.path.name} : barres de {found} min, {tf.bar_minutes} attendues.", err=True)
+        raise typer.Exit(code=1)
+    frame = frame[frame["trading_day"] < cfg.splits.test_start].reset_index(drop=True)
+    folds = [(a, b) for a, b in cfg.tuning.folds]
+    tc, sim = cfg.tuning, cfg.simulation
+    costs = CostModel(sim.fee_rate, sim.slippage)
+    rf, capital = sim.risk_free_rate, sim.initial_capital
+    params = ir.combos(ic, tf)
+    label = timeframe.replace("h", " h").replace("m", " min")
+    out_dir = out_dir / timeframe
+    info = (
+        f"Données : {tf.path.name} (SHA-256 {sha256_file(tf.path)[:12]}…), heure serveur "
+        f"{ic.server_tz}, {len(frame)} barres du {frame['trading_day'].iloc[0]} au "
+        f"{frame['trading_day'].iloc[-1]} (avant le test)."
+    )
+    typer.echo(info)
+    typer.echo(f"{len(params)} réglages x {len(folds)} périodes, test non lu.")
+    daily = ir.daily_frame(frame)
+    grid = ir.run_grid(frame, params, folds, costs, capital, rf)
+    refs = ir.references(daily, folds, costs, capital, rf)
+    lo, hi = tc.min_trades_per_year, tc.max_trades_per_year
+    wf = walk_forward(grid, refs, len(folds), lo, hi, ir.COLUMNS)
+    rand = ir.random_references(frame, wf, folds, ic, tf, costs, tc.random_runs, cfg.seed, rf)
+    sens = ir.costs_sensitivity(
+        frame, daily, wf, folds, ic, tf, costs, capital, tc.costs_factors, rf
+    )
+    final, final_ok = choose(grid, list(range(1, len(folds) + 1)), lo, hi, ir.COLUMNS)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    grid.to_csv(out_dir / "grid.csv", index=False)
+    refs.to_csv(out_dir / "references.csv", index=False)
+    wf.to_csv(out_dir / "walk_forward.csv", index=False)
+    rand.to_csv(out_dir / "random_references.csv", index=False)
+    sens.to_csv(out_dir / "costs.csv", index=False)
+    (out_dir / "final_choice.json").write_text(
+        json.dumps(
+            {**{k: _plain(v) for k, v in final.items()}, "trades_ok": final_ok},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    report = ir.markdown_report(len(params), wf, rand, sens, final, final_ok, grid, info, label)
+    (out_dir / "ict_intraday_report.md").write_text(report, encoding="utf-8")
+    typer.echo(report)
+    typer.echo(f"Résultats : {out_dir}")
+
+
+def _plain(v: object) -> object:
+    """Valeur numpy -> type Python (JSON)."""
+    return v.item() if hasattr(v, "item") else v
+
+
 @app.command()
 def freeze(
     config: Path = CONFIG_OPTION,

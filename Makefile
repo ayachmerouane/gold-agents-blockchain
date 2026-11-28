@@ -1,4 +1,4 @@
-.PHONY: install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard live-init live all
+.PHONY: ict ict-intraday install install-all lint format typecheck test cov check download update-data fill-gaps clean eda prepare data train backtest simulate tune freeze evaluate keygen verify verify-ledger anchor dashboard live-init live all
 
 install:          ## Dépendances de base + outils de dev + EDA
 	uv sync --extra dev --extra eda
@@ -56,6 +56,14 @@ simulate:         ## Agents contre Buy & Hold sur la validation : résultats, re
 
 tune:             ## Réglage des agents en walk-forward (grille, frais, hasard, oracle, schéma)
 	uv run gold-agents tune
+
+ict:              ## Stratégie ICT à règles en walk-forward 2011-2021 (le test n'est pas lu)
+	uv run gold-agents ict
+
+ict-intraday:     ## Agent ICT intraday (1 h, 15 min, 5 min) en walk-forward 2011-2021 (test non lu)
+	uv run gold-agents ict-intraday -t 1h
+	uv run gold-agents ict-intraday -t 15m
+	uv run gold-agents ict-intraday -t 5m
 
 freeze:           ## Scelle les réglages de la config dans un bloc genèse (après tune)
 	uv run gold-agents freeze
